@@ -2763,7 +2763,6 @@ def handle_message(update):
                     return
                     
                 except ValueError:
-                    send_message(chat_id, "សូមបញ្ចូលចំនួនជាលេខ (ឧទាហរណ៍: 1, 2, 3)")
                     return
 
             # Handle confirm/cancel reply keyboard buttons
