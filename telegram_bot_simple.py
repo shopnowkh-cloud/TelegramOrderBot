@@ -2256,7 +2256,6 @@ def handle_callback_query(update):
             save_sessions_async()
             summary_message_id = callback_query['message']['message_id']
             delete_message_async(chat_id, summary_message_id)
-            send_message(chat_id, "🚫 *បានបោះបង់ការទិញ*", parse_mode="Markdown", reply_to_message_id=False, reply_markup=_main_kb(user_id))
             send_account_selection_inline(chat_id)
             return
 
@@ -2373,7 +2372,6 @@ def handle_callback_query(update):
                     del user_sessions[user_id]
             save_sessions_async()
             delete_pending_payment_async(user_id)
-            send_message(chat_id, "🚫 *បានបោះបង់ការទិញ*", parse_mode="Markdown", reply_to_message_id=False, reply_markup=_main_kb(user_id))
             send_account_selection_inline(chat_id)
 
     except Exception as e:
@@ -2823,7 +2821,6 @@ def handle_message(update):
                         if user_id in user_sessions:
                             del user_sessions[user_id]
                     save_sessions_async()
-                    send_message(chat_id, "🚫 *បានបោះបង់ការទិញ*", parse_mode="Markdown", reply_to_message_id=False, reply_markup=_main_kb(user_id))
                     send_account_selection_inline(chat_id)
                     return
 
