@@ -2007,14 +2007,10 @@ def handle_callback_query(update):
                     # Create regular message without reply quote
                     reply_message = "*សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖*"
 
-                    # Build reply keyboard with all available quantities
-                    qty_buttons = [{'text': str(n)} for n in range(1, count + 1)]
-                    # Split into rows of 5
+                    # Build inline keyboard with all available quantities
+                    qty_buttons = [{'text': str(n), 'callback_data': f'qty:{n}'} for n in range(1, count + 1)]
                     qty_rows = [qty_buttons[i:i+5] for i in range(0, len(qty_buttons), 5)]
-                    qty_keyboard = {
-                        'keyboard': qty_rows,
-                        'resize_keyboard': True,
-                    }
+                    qty_keyboard = {'inline_keyboard': qty_rows}
 
                     send_message(chat_id, reply_message, reply_to_message_id=False, parse_mode="Markdown", reply_markup=qty_keyboard)
                     
@@ -2431,9 +2427,9 @@ def handle_message(update):
                         }
                     save_sessions_async()
                     reply_message = "*សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖*"
-                    qty_buttons = [{'text': str(n)} for n in range(1, count + 1)]
+                    qty_buttons = [{'text': str(n), 'callback_data': f'qty:{n}'} for n in range(1, count + 1)]
                     qty_rows = [qty_buttons[i:i+5] for i in range(0, len(qty_buttons), 5)]
-                    qty_keyboard = {'keyboard': qty_rows, 'resize_keyboard': True}
+                    qty_keyboard = {'inline_keyboard': qty_rows}
                     send_message(chat_id, reply_message, reply_to_message_id=False, parse_mode="Markdown", reply_markup=qty_keyboard)
                     logger.info(f"User {user_id} selected account type '{account_type}' via reply keyboard")
                 else:
