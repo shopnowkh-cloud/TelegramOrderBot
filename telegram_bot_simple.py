@@ -2427,12 +2427,6 @@ def handle_message(update):
                     del user_sessions[user_id]
             if had_session:
                 save_sessions_async()
-            try:
-                user_display_name = user.get('last_name') or user.get('first_name', '')
-                welcome_caption = f'<tg-emoji emoji-id="5967385500447675533">🎉</tg-emoji> <b>សូមស្វាគមន៍ {user_display_name}</b>'
-                send_start_banner(chat_id, caption=welcome_caption, parse_mode='HTML', message_effect_id='5046509860389126442', reply_markup=_main_kb(user_id))
-            except Exception as e:
-                logger.error(f"Failed to send banner image: {e}")
             send_account_selection_inline(chat_id)
             return
 
