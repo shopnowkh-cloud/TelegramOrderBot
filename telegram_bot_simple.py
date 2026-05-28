@@ -1249,26 +1249,8 @@ ACCOUNT_BTN_PREFIX = "ទិញ "
 ACCOUNT_BTN_SUFFIX = " - មានក្នុងស្តុក "
 
 def show_account_selection(chat_id):
-    """Send the account selection as a reply keyboard to the given chat."""
-    buttons = []
-    for account_type, accounts in accounts_data['account_types'].items():
-        count = len(accounts)
-        if count > 0:
-            button_text = f"{ACCOUNT_BTN_PREFIX}{account_type}{ACCOUNT_BTN_SUFFIX}{count}"
-            buttons.append([{'text': button_text}])
-    if not buttons:
-        send_message(chat_id, "_សូមអភ័យទោស អស់ពីស្តុក 🪤_", parse_mode="Markdown", reply_to_message_id=False, reply_markup=_main_kb(chat_id))
-        return
-    # In private chats, chat_id == user_id, so we can check admin status here
-    if is_admin(chat_id):
-        buttons.append([{'text': ADMIN_SETTINGS_BTN}])
-    reply_keyboard = {
-        'keyboard': buttons,
-        'resize_keyboard': True,
-        'is_persistent': True,
-    }
-    send_message(chat_id, "<b>សូមជ្រើសរើស Account ដើម្បីទិញ៖</b>",
-                 reply_to_message_id=False, reply_markup=reply_keyboard, parse_mode="HTML")
+    """Send the account selection with inline keyboard."""
+    send_account_selection_inline(chat_id)
 
 
 def send_account_selection_inline(chat_id):
@@ -1276,7 +1258,6 @@ def send_account_selection_inline(chat_id):
     inline_rows = []
     with _data_lock:
         types = dict(accounts_data.get('account_types', {}))
-        prices = dict(accounts_data.get('prices', {}))
     for account_type, accounts in types.items():
         count = len(accounts)
         if count > 0:
@@ -1289,24 +1270,19 @@ def send_account_selection_inline(chat_id):
     if not inline_rows:
         send_message(chat_id, "សូមអភ័យទោស អស់ពីស្តុក 🪤", reply_to_message_id=False)
         return
+    inline_rows.append([
+        {'text': '👤 គណនី', 'callback_data': 'nav:account'},
+        {'text': '🧾 ប្រវត្តិទិញ', 'callback_data': 'nav:history'}
+    ])
     inline_keyboard = {'inline_keyboard': inline_rows}
     send_message(chat_id, "<b>សូមជ្រើសរើស Account ដើម្បីទិញ៖</b>",
                  reply_to_message_id=False, reply_markup=inline_keyboard, parse_mode="HTML")
 
 
-MAIN_REPLY_KEYBOARD = {
-    'keyboard': [
-        [{'text': '💵 ទិញគូប៉ុង'}],
-        [{'text': '👤គណនី'}, {'text': '🧾ប្រវត្តិទិញ'}]
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
-}
+MAIN_REPLY_KEYBOARD = {'remove_keyboard': True}
 
 ADMIN_REPLY_KEYBOARD = {
     'keyboard': [
-        [{'text': '💵 ទិញគូប៉ុង'}],
-        [{'text': '👤គណនី'}, {'text': '🧾ប្រវត្តិទិញ'}],
         [{'text': '⚙️កំណត់'}]
     ],
     'resize_keyboard': True,
@@ -2264,6 +2240,57 @@ def handle_callback_query(update):
 
             return
 
+        # Handle nav inline buttons
+        elif callback_data == 'nav:account':
+            answer_callback(callback_query['id'])
+            full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or 'N/A'
+            account_info = (
+                f"👤 <b>ឈ្មោះ:</b> {full_name}\n"
+                f'<tg-emoji emoji-id="5422683699130933153">🪪</tg-emoji> <b>ID:</b> <code>{user_id}</code>'
+            )
+            send_message(chat_id, account_info, parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+            return
+
+        elif callback_data == 'nav:history':
+            answer_callback(callback_query['id'])
+            rows = get_purchase_history(user_id, limit=20)
+            if not rows:
+                send_message(chat_id, "📭 <b>អ្នកមិនទាន់មានប្រវត្តិទិញទេ។</b>", parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+            else:
+                import datetime
+                cambodia_tz = datetime.timezone(datetime.timedelta(hours=7))
+                send_message(chat_id, "ការទិញចំនួន ២០ ដងចុងក្រោយរបស់អ្នក:", reply_to_message_id=False)
+                for row in rows:
+                    try:
+                        dt = datetime.datetime.fromisoformat(str(row.get('purchased_at', '')).replace('Z', '+00:00'))
+                        dt_kh = dt.astimezone(cambodia_tz).strftime("%d/%m/%Y %H:%M")
+                    except Exception:
+                        dt_kh = str(row.get('purchased_at', ''))
+                    accs = row.get('accounts') or []
+                    if isinstance(accs, str):
+                        try:
+                            accs = json.loads(accs)
+                        except Exception:
+                            accs = []
+                    coupon_lines = ""
+                    for acc in accs:
+                        if 'email' in acc:
+                            coupon_lines += f"\n{acc['email']}"
+                        else:
+                            val = acc.get('phone') or acc.get('password') or ''
+                            coupon_lines += f"\n{val}"
+                    msg = (
+                        f"⎙ <b>ព័ត៌មានប្រតិបត្តិការ</b>\n\n"
+                        f"▫️ ប្រភេទ: {row.get('account_type', 'N/A')}\n"
+                        f"▫️ ចំនួន: {row.get('quantity', 0)}\n"
+                        f"▫️ តម្លៃ: {row.get('total_price', 0)}$\n"
+                        f"▫️កាលបរិច្ឆេទ: {dt_kh}\n"
+                        f"\n<b>⌲ គូប៉ុង E-GetS</b>\n"
+                        f"{coupon_lines}"
+                    )
+                    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False)
+            return
+
         # Handle cancel buy — cancel from summary screen (before QR)
         elif callback_data == 'cancel_buy':
             answer_callback(callback_query['id'])
@@ -2274,6 +2301,7 @@ def handle_callback_query(update):
             summary_message_id = callback_query['message']['message_id']
             delete_message_async(chat_id, summary_message_id)
             send_message(chat_id, "🚫 *បានបោះបង់ការទិញ*", parse_mode="Markdown", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+            send_account_selection_inline(chat_id)
             return
 
         # Handle quantity number button press
@@ -2350,6 +2378,7 @@ def handle_callback_query(update):
             save_sessions_async()
             delete_pending_payment_async(user_id)
             send_message(chat_id, "🚫 *បានបោះបង់ការទិញ*", parse_mode="Markdown", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+            send_account_selection_inline(chat_id)
 
     except Exception as e:
         logger.error(f"Error handling callback query: {e}")
@@ -2799,6 +2828,7 @@ def handle_message(update):
                             del user_sessions[user_id]
                     save_sessions_async()
                     send_message(chat_id, "🚫 *បានបោះបង់ការទិញ*", parse_mode="Markdown", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+                    send_account_selection_inline(chat_id)
                     return
 
         # Handle non-admin users
