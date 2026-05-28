@@ -1349,7 +1349,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_BUYERS}],
         [{'text': BTN_PAYMENT}, {'text': BTN_BAKONG}],
         [{'text': BTN_CHANNEL}],
-        [{'text': BTN_BROADCAST}, {'text': BTN_MAINTENANCE}],
+        [{'text': BTN_MAINTENANCE}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -1421,7 +1421,7 @@ ADD_ACCOUNT_KEYBOARD = {
 # unrecognized-command fallback.
 ADMIN_BUTTON_LABELS = {
     BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_BUYERS,
-    BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_MAINTENANCE, BTN_BROADCAST,
+    BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_MAINTENANCE,
     BTN_BACK_SETTINGS,
     BTN_PAYMENT_EDIT, BTN_BAKONG_EDIT,
     BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR,
@@ -2566,35 +2566,6 @@ def handle_message(update):
                                  reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                     return
 
-            # Admin: handle confirm/cancel of broadcast
-            if _state == 'broadcast_confirm':
-                stripped = text.strip()
-                if stripped == BTN_BROADCAST_CONFIRM:
-                    bcast_msg_id = user_sessions[user_id].get('broadcast_message_id')
-                    bcast_chat_id = user_sessions[user_id].get('broadcast_chat_id') or chat_id
-                    use_copy = bool(user_sessions[user_id].get('broadcast_use_copy'))
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    if not bcast_msg_id:
-                        send_message(chat_id, "⚠️ មិន​ឃើញ​សារ​ដែល​ចង់​ផ្សាយ​ទេ សូម​ចាប់ផ្ដើម​ឡើង​វិញ។",
-                                     reply_to_message_id=False,
-                                     reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                        return
-                    send_message(chat_id, "📢 កំពុង​ផ្សាយ​សារ ... សូមរង់ចាំ",
-                                 reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    background_pool.submit(_run_broadcast, bcast_chat_id, bcast_msg_id, use_copy)
-                    return
-                if stripped == BTN_BROADCAST_CANCEL:
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    send_message(chat_id, "🚫 <b>បាន​បោះបង់​ការ​ផ្សាយ</b>",
-                                 parse_mode="HTML", reply_to_message_id=False,
-                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    return
 
         # Admin: route reply-keyboard button presses from the settings menu / submenus
         if is_admin(user_id) and text.strip() in ADMIN_BUTTON_LABELS:
@@ -2631,13 +2602,6 @@ def handle_message(update):
             if btn == BTN_MAINTENANCE:
                 _show_maintenance_inline(chat_id)
                 return
-            if btn == BTN_BROADCAST:
-                _prompt_admin_input(chat_id, user_id, 'broadcast',
-                    "📢 សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់៖\n\n"
-                    "<i>សារ​នឹង​ត្រូវ​បាន Forward ទៅ​អ្នក​ប្រើ​ប្រាស់ "
-                    "ដោយ​បង្ហាញ​ស្លាក “Forwarded from” ពី​គណនី​អ្នក។</i>")
-                return
-
             # ── Submenu leaf actions ──
             if btn == BTN_PAYMENT_EDIT:
                 _prompt_admin_input(chat_id, user_id, 'payment',
