@@ -259,14 +259,35 @@ _neon_headers = {
     'Accept': 'application/json'
 }
 
-def _neon_query(query, params=None):
-    """Execute a SQL query via Neon HTTP API. Works on any platform (Vercel, Replit, etc.)"""
+def _neon_query(query, params=None, _retries=3, _backoff=2):
+    """Execute a SQL query via Neon HTTP API with automatic retry on cold-start / transient errors."""
     body = {'query': query}
     if params:
         body['params'] = [str(p) if p is not None else None for p in params]
-    resp = http.post(_neon_api_url, headers=_neon_headers, json=body, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+    last_exc = None
+    for attempt in range(1, _retries + 1):
+        try:
+            resp = http.post(_neon_api_url, headers=_neon_headers, json=body, timeout=20)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            last_exc = e
+            if attempt < _retries:
+                wait = _backoff * attempt
+                logger.warning(f"Neon query failed (attempt {attempt}/{_retries}), retrying in {wait}s: {e}")
+                time.sleep(wait)
+    raise last_exc
+
+
+def _neon_keepalive():
+    """Ping Neon every 4 minutes to prevent compute suspension on the free tier."""
+    while True:
+        time.sleep(240)
+        try:
+            _neon_query("SELECT 1")
+            logger.debug("Neon keep-alive ping OK")
+        except Exception as e:
+            logger.warning(f"Neon keep-alive ping failed: {e}")
 
 def _init_db():
     """Create tables if they don't exist."""
@@ -3052,6 +3073,11 @@ def main():
         logger.error(f"Failed to test bot connection: {e}")
         return
     
+    # Start Neon keep-alive daemon thread
+    _ka_thread = threading.Thread(target=_neon_keepalive, daemon=True, name="neon-keepalive")
+    _ka_thread.start()
+    logger.info("Neon keep-alive thread started (ping every 4 minutes)")
+
     # Main polling loop
     offset = None
     consecutive_409 = 0
