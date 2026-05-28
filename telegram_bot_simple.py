@@ -2716,8 +2716,13 @@ def handle_message(update):
                 show_account_selection(chat_id)
                 return
 
-            # Quantity is selected via inline buttons only — ignore any text input
+            # Quantity is selected via inline buttons only — any text shows account selection
             if session['state'] == 'waiting_for_quantity':
+                with _data_lock:
+                    if user_id in user_sessions:
+                        del user_sessions[user_id]
+                save_sessions_async()
+                send_account_selection_inline(chat_id)
                 return
 
             # Handle confirm/cancel reply keyboard buttons
