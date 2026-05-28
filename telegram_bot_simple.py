@@ -2716,31 +2716,9 @@ def handle_message(update):
                 show_account_selection(chat_id)
                 return
 
-            # Handle quantity input for purchase
+            # Quantity is selected via inline buttons only — ignore any text input
             if session['state'] == 'waiting_for_quantity':
-                try:
-                    quantity = int(text.strip())
-                    if quantity <= 0:
-                        send_message(chat_id, "សូមបញ្ចូលចំនួនធំជាង 0")
-                        return
-                    
-                    if quantity > session['available_count']:
-                        send_message(chat_id, f"សុំទោស! មានត្រឹមតែ {session['available_count']} នៅក្នុងស្តុក")
-                        return
-                    
-                    # Calculate total price
-                    total_price = quantity * session['price']
-                    
-                    with _data_lock:
-                        session['quantity'] = quantity
-                        session['total_price'] = total_price
-                        session['state'] = 'payment_pending'
-                    save_sessions_async()
-                    _generate_and_send_qr(chat_id, user_id, session)
-                    return
-                    
-                except ValueError:
-                    return
+                return
 
             # Handle confirm/cancel reply keyboard buttons
             elif session['state'] == 'waiting_for_confirmation':
