@@ -1271,6 +1271,29 @@ def show_account_selection(chat_id):
                  reply_to_message_id=False, reply_markup=reply_keyboard, parse_mode="HTML")
 
 
+def send_account_selection_inline(chat_id):
+    """Send the account selection message with inline keyboard buttons showing stock counts."""
+    inline_rows = []
+    with _data_lock:
+        types = dict(accounts_data.get('account_types', {}))
+        prices = dict(accounts_data.get('prices', {}))
+    for account_type, accounts in types.items():
+        count = len(accounts)
+        if count > 0:
+            btn_text = f"ទិញ {account_type} - មានក្នុងស្តុក {count}"
+            cb = f"buy:{_type_callback_id(account_type)}"
+        else:
+            btn_text = f"🪤 {account_type} - អស់ស្តុក"
+            cb = f"out_of_stock:{_type_callback_id(account_type)}"
+        inline_rows.append([{'text': btn_text, 'callback_data': cb}])
+    if not inline_rows:
+        send_message(chat_id, "សូមអភ័យទោស អស់ពីស្តុក 🪤", reply_to_message_id=False)
+        return
+    inline_keyboard = {'inline_keyboard': inline_rows}
+    send_message(chat_id, "<b>សូមជ្រើសរើស Account ដើម្បីទិញ៖</b>",
+                 reply_to_message_id=False, reply_markup=inline_keyboard, parse_mode="HTML")
+
+
 MAIN_REPLY_KEYBOARD = {
     'keyboard': [
         [{'text': '💵 ទិញគូប៉ុង'}],
@@ -2387,6 +2410,7 @@ def handle_message(update):
                 send_start_banner(chat_id, caption=welcome_caption, parse_mode='HTML', message_effect_id='5046509860389126442', reply_markup=_main_kb(user_id))
             except Exception as e:
                 logger.error(f"Failed to send banner image: {e}")
+            send_account_selection_inline(chat_id)
             return
 
         if text.strip() == '💵 ទិញគូប៉ុង':
