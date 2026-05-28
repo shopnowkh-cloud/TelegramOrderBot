@@ -1270,10 +1270,6 @@ def send_account_selection_inline(chat_id):
     if not inline_rows:
         send_message(chat_id, "សូមអភ័យទោស អស់ពីស្តុក 🪤", reply_to_message_id=False)
         return
-    inline_rows.append([
-        {'text': '👤 គណនី', 'callback_data': 'nav:account'},
-        {'text': '🧾 ប្រវត្តិទិញ', 'callback_data': 'nav:history'}
-    ])
     inline_keyboard = {'inline_keyboard': inline_rows}
     send_message(chat_id, "<b>សូមជ្រើសរើស Account ដើម្បីទិញ៖</b>",
                  reply_to_message_id=False, reply_markup=inline_keyboard, parse_mode="HTML")
@@ -2238,57 +2234,6 @@ def handle_callback_query(update):
                              parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
                 return
 
-            return
-
-        # Handle nav inline buttons
-        elif callback_data == 'nav:account':
-            answer_callback(callback_query['id'])
-            full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or 'N/A'
-            account_info = (
-                f"👤 <b>ឈ្មោះ:</b> {full_name}\n"
-                f'<tg-emoji emoji-id="5422683699130933153">🪪</tg-emoji> <b>ID:</b> <code>{user_id}</code>'
-            )
-            send_message(chat_id, account_info, parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
-            return
-
-        elif callback_data == 'nav:history':
-            answer_callback(callback_query['id'])
-            rows = get_purchase_history(user_id, limit=20)
-            if not rows:
-                send_message(chat_id, "📭 <b>អ្នកមិនទាន់មានប្រវត្តិទិញទេ។</b>", parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
-            else:
-                import datetime
-                cambodia_tz = datetime.timezone(datetime.timedelta(hours=7))
-                send_message(chat_id, "ការទិញចំនួន ២០ ដងចុងក្រោយរបស់អ្នក:", reply_to_message_id=False)
-                for row in rows:
-                    try:
-                        dt = datetime.datetime.fromisoformat(str(row.get('purchased_at', '')).replace('Z', '+00:00'))
-                        dt_kh = dt.astimezone(cambodia_tz).strftime("%d/%m/%Y %H:%M")
-                    except Exception:
-                        dt_kh = str(row.get('purchased_at', ''))
-                    accs = row.get('accounts') or []
-                    if isinstance(accs, str):
-                        try:
-                            accs = json.loads(accs)
-                        except Exception:
-                            accs = []
-                    coupon_lines = ""
-                    for acc in accs:
-                        if 'email' in acc:
-                            coupon_lines += f"\n{acc['email']}"
-                        else:
-                            val = acc.get('phone') or acc.get('password') or ''
-                            coupon_lines += f"\n{val}"
-                    msg = (
-                        f"⎙ <b>ព័ត៌មានប្រតិបត្តិការ</b>\n\n"
-                        f"▫️ ប្រភេទ: {row.get('account_type', 'N/A')}\n"
-                        f"▫️ ចំនួន: {row.get('quantity', 0)}\n"
-                        f"▫️ តម្លៃ: {row.get('total_price', 0)}$\n"
-                        f"▫️កាលបរិច្ឆេទ: {dt_kh}\n"
-                        f"\n<b>⌲ គូប៉ុង E-GetS</b>\n"
-                        f"{coupon_lines}"
-                    )
-                    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False)
             return
 
         # Handle cancel buy — cancel from summary screen (before QR)
