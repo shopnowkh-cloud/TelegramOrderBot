@@ -1923,20 +1923,41 @@ def _run_broadcast(admin_chat_id, source_message_id, use_copy=False):
             pass
 
 
-def _send_order_summary(chat_id, user_id, session):
-    """Send order summary with reply keyboard. Stores summary_message_id in session."""
-    quantity = session['quantity']
-    total_price = session['total_price']
-    summary = (
-        f"<b>សូមបញ្ជាក់ការបញ្ជាទិញ</b>\n\n"
-        f"<blockquote>🔹 ចំនួន: {quantity}\n\n"
-        f"🔹 ប្រភេទ: {session['account_type']}\n\n"
-        f"🔹 តម្លៃ: {total_price}$</blockquote>"
-    )
-    resp = send_message(chat_id, summary, reply_to_message_id=False, parse_mode="HTML", reply_markup=CONFIRM_REPLY_KEYBOARD)
-    if resp and resp.get('result'):
+def _generate_and_send_qr(chat_id, user_id, session):
+    """Generate KHQR and send to user immediately."""
+    try:
+        img_bytes, md5_or_err, qr_string = generate_payment_qr(session['total_price'])
+        if not img_bytes:
+            err_detail = md5_or_err or "មិនដឹងមូលហេតុ"
+            logger.error(f"QR generation returned None: {err_detail}")
+            if str(user_id) == str(ADMIN_ID):
+                send_message(chat_id, f"❌ *QR បរាជ័យ (Admin Debug):*\n`{err_detail}`", parse_mode="Markdown")
+            else:
+                send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
+                send_message(ADMIN_ID, f"⚠️ *QR Error (user {user_id}):*\n`{err_detail}`", parse_mode="Markdown")
+            with _data_lock:
+                if user_id in user_sessions:
+                    del user_sessions[user_id]
+            save_sessions_async()
+            return
+        md5_hash = md5_or_err
+        session['md5_hash'] = md5_hash
+        session['qr_sent_at'] = time.time()
+        photo_resp = send_photo_bytes(chat_id, img_bytes, reply_markup=CHECK_PAYMENT_KEYBOARD)
+        if photo_resp and photo_resp.get('result'):
+            msg_id = photo_resp['result']['message_id']
+            session['photo_message_id'] = msg_id
+            session['qr_message_id'] = msg_id
+        save_sessions_async()
+        save_pending_payment_async(user_id, chat_id, session)
+        logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, MD5: {md5_hash}")
+    except Exception as e:
+        logger.error(f"Error generating KHQR: {type(e).__name__}: {e}")
+        send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
         with _data_lock:
-            session['summary_message_id'] = resp['result']['message_id']
+            if user_id in user_sessions:
+                del user_sessions[user_id]
+        save_sessions_async()
 
 
 def _purchase_notification_targets():
@@ -2283,50 +2304,8 @@ def handle_callback_query(update):
             save_sessions_async()
 
             answer_callback(callback_query['id'], 'កំពុងបង្កើត QR...')
-
-            # Delete the quantity keyboard message
             delete_message_async(chat_id, callback_query['message']['message_id'])
-
-            # Generate KHQR immediately — no confirmation step
-            try:
-                img_bytes, md5_or_err, qr_string = generate_payment_qr(session['total_price'])
-                if not img_bytes:
-                    err_detail = md5_or_err or "មិនដឹងមូលហេតុ"
-                    logger.error(f"QR generation returned None: {err_detail}")
-                    if str(user_id) == str(ADMIN_ID):
-                        send_message(chat_id,
-                            f"❌ *QR បរាជ័យ (Admin Debug):*\n`{err_detail}`",
-                            parse_mode="Markdown")
-                    else:
-                        send_message(chat_id,
-                            "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។",
-                            parse_mode="Markdown")
-                        send_message(ADMIN_ID,
-                            f"⚠️ *QR Error (user {user_id}):*\n`{err_detail}`",
-                            parse_mode="Markdown")
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    return
-                md5_hash = md5_or_err
-                session['md5_hash'] = md5_hash
-                session['qr_sent_at'] = time.time()
-                photo_resp = send_photo_bytes(chat_id, img_bytes, reply_markup=CHECK_PAYMENT_KEYBOARD)
-                if photo_resp and photo_resp.get('result'):
-                    msg_id = photo_resp['result']['message_id']
-                    session['photo_message_id'] = msg_id
-                    session['qr_message_id'] = msg_id
-                save_sessions_async()
-                save_pending_payment_async(user_id, chat_id, session)
-                logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, MD5: {md5_hash}")
-            except Exception as e:
-                logger.error(f"Error generating KHQR: {type(e).__name__}: {e}")
-                send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
-                with _data_lock:
-                    if user_id in user_sessions:
-                        del user_sessions[user_id]
-                save_sessions_async()
+            _generate_and_send_qr(chat_id, user_id, session)
             return
 
         # Handle check payment button
@@ -2752,14 +2731,12 @@ def handle_message(update):
                     # Calculate total price
                     total_price = quantity * session['price']
                     
-                    # Update session with purchase details, wait for confirmation
                     with _data_lock:
                         session['quantity'] = quantity
                         session['total_price'] = total_price
-                        session['state'] = 'waiting_for_confirmation'
+                        session['state'] = 'payment_pending'
                     save_sessions_async()
-                    
-                    _send_order_summary(chat_id, user_id, session)
+                    _generate_and_send_qr(chat_id, user_id, session)
                     return
                     
                 except ValueError:
