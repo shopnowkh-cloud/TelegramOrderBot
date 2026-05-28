@@ -1298,19 +1298,13 @@ def send_account_selection_inline(chat_id):
 
 MAIN_REPLY_KEYBOARD = {'remove_keyboard': True}
 
-ADMIN_REPLY_KEYBOARD = {
-    'keyboard': [
-        [{'text': '⚙️កំណត់'}]
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
-}
+ADMIN_REPLY_KEYBOARD = {'remove_keyboard': True}
 
 ADMIN_SETTINGS_BTN = '⚙️កំណត់'
 
 def _main_kb(uid):
-    """Return the appropriate main reply keyboard based on whether the user is an admin."""
-    return ADMIN_REPLY_KEYBOARD if is_admin(uid) else MAIN_REPLY_KEYBOARD
+    """Return remove_keyboard for all users — no persistent reply keyboard."""
+    return MAIN_REPLY_KEYBOARD
 
 # ── Admin settings reply-keyboard buttons ──
 BTN_ADD_ACCOUNT     = '➕ បន្ថែម Account'
@@ -2527,8 +2521,8 @@ def handle_message(update):
                     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False)
             return
 
-        # Admin: open settings menu via the ⚙️កំណត់ keyboard button
-        if text.strip() == ADMIN_SETTINGS_BTN and is_admin(user_id):
+        # Admin: open settings menu via /settings command
+        if text.strip() == '/settings' and is_admin(user_id):
             # Clear any leftover admin_input session so it doesn't capture this press
             if user_id in user_sessions and str(user_sessions[user_id].get('state', '')).startswith('admin_input:'):
                 with _data_lock:
