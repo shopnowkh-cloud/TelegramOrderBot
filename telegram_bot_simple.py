@@ -1348,7 +1348,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_ADD_ACCOUNT}, {'text': BTN_DELETE_TYPE}],
         [{'text': BTN_BUYERS}],
         [{'text': BTN_PAYMENT}, {'text': BTN_BAKONG}],
-        [{'text': BTN_CHANNEL}, {'text': BTN_ADMINS}],
+        [{'text': BTN_CHANNEL}],
         [{'text': BTN_BROADCAST}, {'text': BTN_MAINTENANCE}],
     ],
     'resize_keyboard': True,
@@ -1421,7 +1421,7 @@ ADD_ACCOUNT_KEYBOARD = {
 # unrecognized-command fallback.
 ADMIN_BUTTON_LABELS = {
     BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_BUYERS,
-    BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_ADMINS, BTN_MAINTENANCE, BTN_BROADCAST,
+    BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_MAINTENANCE, BTN_BROADCAST,
     BTN_BACK_SETTINGS,
     BTN_PAYMENT_EDIT, BTN_BAKONG_EDIT,
     BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR,
@@ -2627,9 +2627,6 @@ def handle_message(update):
                 return
             if btn == BTN_CHANNEL:
                 _show_channel_inline(chat_id)
-                return
-            if btn == BTN_ADMINS:
-                _show_admins_inline(chat_id)
                 return
             if btn == BTN_MAINTENANCE:
                 _show_maintenance_inline(chat_id)
