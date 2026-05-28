@@ -1346,7 +1346,7 @@ BROADCAST_CONFIRM_KEYBOARD = {
 ADMIN_SETTINGS_REPLY_KEYBOARD = {
     'keyboard': [
         [{'text': BTN_ADD_ACCOUNT}, {'text': BTN_DELETE_TYPE}],
-        [{'text': BTN_USERS}, {'text': BTN_BUYERS}],
+        [{'text': BTN_BUYERS}],
         [{'text': BTN_PAYMENT}, {'text': BTN_BAKONG}],
         [{'text': BTN_CHANNEL}, {'text': BTN_ADMINS}],
         [{'text': BTN_BROADCAST}, {'text': BTN_MAINTENANCE}],
@@ -1420,7 +1420,7 @@ ADD_ACCOUNT_KEYBOARD = {
 # Set of submenu/leaf button labels admins can press; used to keep them out of the
 # unrecognized-command fallback.
 ADMIN_BUTTON_LABELS = {
-    BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_USERS, BTN_BUYERS,
+    BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_BUYERS,
     BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_ADMINS, BTN_MAINTENANCE, BTN_BROADCAST,
     BTN_BACK_SETTINGS,
     BTN_PAYMENT_EDIT, BTN_BAKONG_EDIT,
@@ -2615,9 +2615,6 @@ def handle_message(update):
                 return
             if btn == BTN_DELETE_TYPE:
                 _show_delete_type_menu_inline(chat_id, user_id)
-                return
-            if btn == BTN_USERS:
-                _show_users_list_inline(chat_id)
                 return
             if btn == BTN_BUYERS:
                 _export_buyers_report_inline(chat_id)
