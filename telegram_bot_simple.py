@@ -2028,11 +2028,8 @@ def handle_callback_query(update):
         # Handle out-of-stock button clicks
         elif callback_data.startswith('out_of_stock:') or callback_data.startswith('out_of_stock_'):
             answer_callback(callback_query['id'])
-            if callback_data.startswith('out_of_stock:'):
-                account_type = _account_type_from_callback_id(callback_data[13:]) or "នេះ"
-            else:
-                account_type = callback_data.replace('out_of_stock_', '')
-            send_message(chat_id, f"សូមអភ័យទោស Account {account_type} អស់ពីស្តុក 🪤")
+            delete_message_async(chat_id, callback_query['message']['message_id'])
+            send_account_selection_inline(chat_id)
 
         # Handle confirm buy — generate QR and proceed to payment
         elif callback_data == 'confirm_buy':
@@ -2280,11 +2277,15 @@ def handle_callback_query(update):
             try:
                 quantity = int(callback_data.split(':', 1)[1])
             except (ValueError, IndexError):
-                answer_callback(callback_query['id'], 'ចំនួនមិនត្រឹមត្រូវ។', True)
+                answer_callback(callback_query['id'])
+                delete_message_async(chat_id, callback_query['message']['message_id'])
+                send_account_selection_inline(chat_id)
                 return
 
             if quantity > session['available_count']:
-                answer_callback(callback_query['id'], f"សុំទោស! មានត្រឹមតែ {session['available_count']} នៅក្នុងស្តុក", True)
+                answer_callback(callback_query['id'])
+                delete_message_async(chat_id, callback_query['message']['message_id'])
+                send_account_selection_inline(chat_id)
                 return
 
             total_price = quantity * session['price']
@@ -2305,13 +2306,17 @@ def handle_callback_query(update):
             if not session or session.get('state') != 'payment_pending':
                 session = get_pending_payment(user_id)
             if not session:
-                answer_callback(callback_query['id'], 'មិនមានការទិញដែលកំពុងរង់ចាំ។', True)
+                answer_callback(callback_query['id'])
+                delete_message_async(chat_id, callback_query['message']['message_id'])
+                send_account_selection_inline(chat_id)
                 return
 
             # Check payment status
             md5 = session.get('md5_hash')
             if not md5:
-                answer_callback(callback_query['id'], 'មានបញ្ហាក្នុងការស្វែងរក QR។ សូមចាប់ផ្តើមម្តងទៀត។', True)
+                answer_callback(callback_query['id'])
+                delete_message_async(chat_id, callback_query['message']['message_id'])
+                send_account_selection_inline(chat_id)
                 return
             is_paid, payment_data = check_payment_status(md5)
             if is_paid:
