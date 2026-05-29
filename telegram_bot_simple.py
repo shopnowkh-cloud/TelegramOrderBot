@@ -281,15 +281,65 @@ def _neon_query(query, params=None, _retries=3, _backoff=2):
     raise last_exc
 
 
+def _neon_cleanup():
+    """Remove old rows that accumulate forever and waste storage.
+
+    Runs once per day inside the keepalive thread.
+
+    Rules
+    -----
+    - bot_sent_verifications   : delete rows older than 30 days
+    - bot_scheduled_deletions  : delete rows whose delete_at expired > 1 day ago
+    - bot_purchase_history     : clear the accounts JSONB for rows older than 90 days
+                                 (keeps the sale record but discards the credentials)
+    """
+    try:
+        r1 = _neon_query(
+            "DELETE FROM bot_sent_verifications "
+            "WHERE first_sent_at < NOW() - INTERVAL '30 days'"
+        )
+        deleted_verif = (r1.get('rowCount') or 0)
+
+        r2 = _neon_query(
+            "DELETE FROM bot_scheduled_deletions "
+            "WHERE delete_at < NOW() - INTERVAL '1 day'"
+        )
+        deleted_sched = (r2.get('rowCount') or 0)
+
+        r3 = _neon_query(
+            "UPDATE bot_purchase_history "
+            "SET accounts = '[]'::jsonb "
+            "WHERE accounts != '[]'::jsonb "
+            "  AND purchased_at < NOW() - INTERVAL '90 days'"
+        )
+        cleared_accounts = (r3.get('rowCount') or 0)
+
+        logger.info(
+            f"Neon cleanup: removed {deleted_verif} old verifications, "
+            f"{deleted_sched} expired deletions, "
+            f"cleared credentials on {cleared_accounts} old history rows"
+        )
+    except Exception as e:
+        logger.warning(f"Neon cleanup failed: {e}")
+
 def _neon_keepalive():
-    """Ping Neon every 4 minutes to prevent compute suspension on the free tier."""
+    """Ping Neon every 4 minutes to prevent compute suspension on the free tier.
+    Also runs a daily cleanup to keep storage usage low."""
+    cleanup_interval = 24 * 60 * 60  # 24 hours in seconds
+    ping_interval    = 240            # 4 minutes in seconds
+    pings_per_cleanup = cleanup_interval // ping_interval  # ~360 pings
+    ping_count = 0
     while True:
-        time.sleep(240)
+        time.sleep(ping_interval)
         try:
             _neon_query("SELECT 1")
             logger.debug("Neon keep-alive ping OK")
         except Exception as e:
             logger.warning(f"Neon keep-alive ping failed: {e}")
+        ping_count += 1
+        if ping_count >= pings_per_cleanup:
+            ping_count = 0
+            _neon_cleanup()
 
 def _init_db():
     """Create tables if they don't exist."""
