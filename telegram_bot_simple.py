@@ -1162,7 +1162,7 @@ def copy_message(chat_id, from_chat_id, message_id, reply_markup=None):
     url = f"{API_URL}/copyMessage"
     data = {'chat_id': chat_id, 'from_chat_id': from_chat_id, 'message_id': message_id}
     if reply_markup:
-        data['reply_markup'] = json.dumps(reply_markup)
+        data['reply_markup'] = reply_markup
     try:
         response = http.post(url, json=data, timeout=10)
         response.raise_for_status()
