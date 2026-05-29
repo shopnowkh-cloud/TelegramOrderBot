@@ -1345,7 +1345,7 @@ BROADCAST_CONFIRM_KEYBOARD = {
 ADMIN_SETTINGS_REPLY_KEYBOARD = {
     'keyboard': [
         [{'text': BTN_ADD_ACCOUNT}, {'text': BTN_DELETE_TYPE}],
-        [{'text': BTN_BUYERS}],
+        [{'text': BTN_BUYERS}, {'text': BTN_BACK_SETTINGS}],
         [{'text': BTN_PAYMENT}, {'text': BTN_BAKONG}],
         [{'text': BTN_CHANNEL}],
         [{'text': BTN_MAINTENANCE}],
