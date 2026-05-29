@@ -496,22 +496,46 @@ def set_setting(key, value):
     except Exception as e:
         logger.error(f"Failed to save setting {key}: {e}")
 
+_data_loaded_ok = False   # True only after a successful load_data()
+
 def load_data():
-    """Load accounts data from Neon via HTTP API."""
+    """Load accounts data from Neon via HTTP API.
+    Uses more retries than the default to survive Neon cold-start on bot restart."""
+    global _data_loaded_ok
     try:
-        r = _neon_query("SELECT data FROM bot_accounts LIMIT 1")
+        r = _neon_query("SELECT data FROM bot_accounts LIMIT 1",
+                        _retries=6, _backoff=3)   # up to ~45s wait for Neon wake-up
         if r['rows']:
             data = r['rows'][0]['data']
             if isinstance(data, str):
                 data = json.loads(data)
             logger.info("Loaded accounts data from Neon DB")
+            _data_loaded_ok = True
             return data
     except Exception as e:
         logger.error(f"Failed to load data from DB: {e}")
+    _data_loaded_ok = False
     return {'accounts': [], 'account_types': {}, 'prices': {}}
 
 def save_data():
-    """Save accounts data to Neon via HTTP API."""
+    """Save accounts data to Neon via HTTP API.
+    Refuses to save if the initial load failed (prevents wiping real data with an empty state)."""
+    global _data_loaded_ok
+    if not _data_loaded_ok:
+        # Try reloading first; if it still fails, abort the save to protect existing data
+        logger.warning("save_data called before successful load — attempting reload before saving")
+        reloaded = load_data()
+        if not _data_loaded_ok:
+            logger.error("save_data aborted: could not verify DB state. Data NOT overwritten.")
+            return
+        with _data_lock:
+            # Merge: keep DB data as base, overlay only keys present in current memory
+            for key in ('account_types', 'prices'):
+                if accounts_data.get(key):
+                    reloaded[key] = accounts_data[key]
+            if accounts_data.get('accounts'):
+                reloaded['accounts'] = accounts_data['accounts']
+            accounts_data.update(reloaded)
     try:
         _neon_query("UPDATE bot_accounts SET data = $1",
                     [json.dumps(accounts_data, ensure_ascii=False)])
