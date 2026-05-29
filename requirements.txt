@@ -9,3 +9,9 @@ pillow>=11.3.0
 python-telegram-bot>=22.3
 qrcode>=8.2
 requests>=2.32.4
+bakong-khqr[image]
+pillow
+python-telegram-bot
+qrcode
+requests
+telegram
