@@ -1324,10 +1324,13 @@ def show_account_selection(chat_id):
 
 
 def send_account_selection_inline(chat_id):
-    """Send the account selection message with inline keyboard buttons showing stock counts."""
+    """Send the account selection message with inline keyboard buttons showing stock counts.
+    Does nothing if there are no account types defined at all."""
     inline_rows = []
     with _data_lock:
         types = dict(accounts_data.get('account_types', {}))
+    if not types:
+        return
     for account_type, accounts in types.items():
         count = len(accounts)
         if count > 0:
@@ -1338,7 +1341,6 @@ def send_account_selection_inline(chat_id):
             cb = f"out_of_stock:{_type_callback_id(account_type)}"
         inline_rows.append([{'text': btn_text, 'callback_data': cb}])
     if not inline_rows:
-        send_message(chat_id, "សូមអភ័យទោស អស់ពីស្តុក 🪤", reply_to_message_id=False)
         return
     inline_keyboard = {'inline_keyboard': inline_rows}
     send_message(chat_id, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>",
