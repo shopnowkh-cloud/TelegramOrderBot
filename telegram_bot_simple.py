@@ -1467,9 +1467,12 @@ ADD_ACCOUNT_KEYBOARD = {
 }
 
 def _build_account_type_keyboard():
-    """Build a reply keyboard with all existing account types (2 per row) plus a back button."""
+    """Build a reply keyboard with account types that have stock > 0 (2 per row) plus a back button."""
     with _data_lock:
-        types = sorted(accounts_data.get('account_types', {}).keys())
+        types = sorted(
+            t for t, accs in accounts_data.get('account_types', {}).items()
+            if len(accs) > 0
+        )
     rows = []
     for i in range(0, len(types), 2):
         row = [{'text': types[i]}]
@@ -1499,32 +1502,13 @@ CONFIRM_REPLY_KEYBOARD = {
 
 
 def send_admin_settings_menu(chat_id):
-    """Open the admin settings reply keyboard.
-    Hides the 🗑 លុបប្រភេទ button when no account types exist."""
-    with _data_lock:
-        has_types = any(
-            len(v) > 0
-            for v in accounts_data.get('account_types', {}).values()
-        )
-    first_row = [{'text': BTN_ADD_ACCOUNT}]
-    if has_types:
-        first_row.append({'text': BTN_DELETE_TYPE})
-    keyboard = {
-        'keyboard': [
-            first_row,
-            [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
-            [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
-            [{'text': BTN_MAINTENANCE}],
-        ],
-        'resize_keyboard': True,
-        'is_persistent': True
-    }
+    """Open the admin settings reply keyboard."""
     send_message(
         chat_id,
         "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖",
         parse_mode="HTML",
         reply_to_message_id=False,
-        reply_markup=keyboard
+        reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
     )
 
 
