@@ -2066,8 +2066,6 @@ def handle_callback_query(update):
             if not account_type:
                 answer_callback(callback_query['id'], 'ប្រភេទនេះមិនមានទៀតហើយ។ សូមចាប់ផ្តើមម្តងទៀត។', True)
                 return
-            answer_callback(callback_query['id'])
-            
             # Check if account type exists and has stock
             if account_type in accounts_data['account_types']:
                 with _data_lock:
@@ -2076,6 +2074,7 @@ def handle_callback_query(update):
                     price = accounts_data['prices'].get(account_type, 0)
                 
                 if count > 0:
+                    answer_callback(callback_query['id'])
                     # Always allow user to select account type (reset any existing session)
                     with _data_lock:
                         user_sessions[user_id] = {
@@ -2101,7 +2100,7 @@ def handle_callback_query(update):
                     
                     logger.info(f"User {user_id} selected account type {account_type}, waiting for quantity input")
                 else:
-                    send_message(chat_id, f"សុំទោស! Account {account_type} អស់ស្តុកហើយ។")
+                    answer_callback(callback_query['id'], f"សុំទោស! {account_type} អស់ស្តុកហើយ។", True)
         
         # Handle out-of-stock button clicks
         elif callback_data.startswith('out_of_stock:') or callback_data.startswith('out_of_stock_'):
