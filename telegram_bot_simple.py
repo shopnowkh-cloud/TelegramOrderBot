@@ -3076,9 +3076,7 @@ def deliver_accounts(chat_id, user_id, session, payment_data=None, user_name='')
     save_purchase_history_async(user_id, account_type, quantity, session.get('total_price', 0), delivered_accounts)
 
     accounts_message = f'<tg-emoji emoji-id="5436040291507247633">🎉</tg-emoji> <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\n'
-    accounts_message += f"<blockquote>🔹 ប្រភេទ: {account_type}\n"
-    accounts_message += f"🔹 ចំនួន: {quantity}</blockquote>\n\n"
-    accounts_message += "<b>Accounts របស់អ្នក៖</b>\n\n"
+    accounts_message += "<b>គូប៉ុងរបស់អ្នក៖ 👇</b>\n\n"
     for account in delivered_accounts:
         if 'email' in account:
             accounts_message += f"{account['email']}\n"
