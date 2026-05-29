@@ -1157,6 +1157,21 @@ def send_photo_bytes(chat_id, photo_bytes, caption=None, parse_mode=None, reply_
         logger.error(f"Failed to send photo bytes: {e}")
         return None
 
+def copy_message(chat_id, from_chat_id, message_id, reply_markup=None):
+    """Copy a message to a chat (no 'forwarded from' label)."""
+    url = f"{API_URL}/copyMessage"
+    data = {'chat_id': chat_id, 'from_chat_id': from_chat_id, 'message_id': message_id}
+    if reply_markup:
+        data['reply_markup'] = json.dumps(reply_markup)
+    try:
+        response = http.post(url, json=data, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error(f"Failed to copy message: {e}")
+        return None
+
+
 def send_photo_url(chat_id, photo_url, caption=None, parse_mode=None, reply_markup=None):
     """Send a photo from a URL to a specific chat."""
     url = f"{API_URL}/sendPhoto"
@@ -1949,6 +1964,15 @@ def _generate_and_send_qr(chat_id, user_id, session):
         save_sessions_async()
 
 
+def _remind_pending_payment(chat_id, session):
+    """Resend the KHQR photo with buttons and a reminder text."""
+    photo_msg_id = session.get('photo_message_id') or session.get('qr_message_id')
+    if photo_msg_id:
+        copy_message(chat_id, chat_id, photo_msg_id, reply_markup=CHECK_PAYMENT_KEYBOARD)
+    else:
+        send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
+
+
 def _purchase_notification_targets():
     targets = [ADMIN_ID]
     if CHANNEL_ID and str(CHANNEL_ID) != str(ADMIN_ID):
@@ -1984,8 +2008,9 @@ def handle_callback_query(update):
             # Block new purchase if one is already pending payment
             existing_session = user_sessions.get(user_id)
             if existing_session and existing_session.get('state') == 'payment_pending':
-                answer_callback(callback_query['id'], '⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។', True)
+                answer_callback(callback_query['id'])
                 delete_message_async(chat_id, callback_query['message']['message_id'])
+                _remind_pending_payment(chat_id, existing_session)
                 return
 
             if callback_data.startswith('buy:'):
@@ -2404,7 +2429,7 @@ def handle_message(update):
             logger.info(f"User {user_id} triggered account selection interface")
             existing = user_sessions.get(user_id)
             if existing and existing.get('state') == 'payment_pending':
-                send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
+                _remind_pending_payment(chat_id, existing)
                 return
             with _data_lock:
                 had_session = user_id in user_sessions
@@ -2665,7 +2690,7 @@ def handle_message(update):
 
             # Block any text while payment is pending — remind user to pay or cancel
             if session.get('state') == 'payment_pending':
-                send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
+                _remind_pending_payment(chat_id, session)
                 return
 
             # Quantity is selected via inline buttons only — any text shows account selection
@@ -2733,7 +2758,7 @@ def handle_message(update):
         if not is_admin(user_id):
             existing = user_sessions.get(user_id)
             if existing and existing.get('state') == 'payment_pending':
-                send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
+                _remind_pending_payment(chat_id, existing)
                 return
             logger.info(f"Non-admin user {user_id} sent unrecognized command, showing account selection")
             show_account_selection_local()
