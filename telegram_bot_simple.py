@@ -2273,7 +2273,9 @@ def handle_callback_query(update):
         elif callback_data.startswith('qty:'):
             session = user_sessions.get(user_id)
             if not session or session.get('state') != 'waiting_for_quantity':
-                answer_callback(callback_query['id'], 'សូមចាប់ផ្ដើមជ្រើសរើស Account ម្ដងទៀត។', True)
+                answer_callback(callback_query['id'])
+                delete_message_async(chat_id, callback_query['message']['message_id'])
+                send_account_selection_inline(chat_id)
                 return
             try:
                 quantity = int(callback_data.split(':', 1)[1])
