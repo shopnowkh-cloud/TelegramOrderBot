@@ -1339,6 +1339,7 @@ def send_account_selection_inline(chat_id):
         cb = f"buy:{_type_callback_id(account_type)}"
         inline_rows.append([{'text': btn_text, 'callback_data': cb}])
     if not inline_rows:
+        send_message(chat_id, "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>", parse_mode="HTML", reply_to_message_id=False)
         return
     inline_keyboard = {'inline_keyboard': inline_rows}
     send_message(chat_id, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>",
