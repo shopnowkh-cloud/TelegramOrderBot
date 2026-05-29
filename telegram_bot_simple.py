@@ -2760,21 +2760,68 @@ def handle_message(update):
                     import re
                     email_pattern = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
                     accounts = []
+                    seen_in_batch = set()
                     lines = text.strip().split('\n')
                     for line in lines:
                         email = line.strip()
                         if email and email_pattern.match(email):
-                            accounts.append({'email': email})
-                    
-                    if accounts:
-                        with _data_lock:
-                            session['accounts'] = accounts
-                            session['state'] = 'waiting_for_account_type'
-                        save_sessions_async()
-                        count = len(accounts)
-                        send_message(chat_id, f"*បានបញ្ចូល Account ចំនួន {count}\n\nសូមបញ្ចូលប្រភេទ Account៖*", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=ADD_ACCOUNT_KEYBOARD)
-                    else:
+                            key = email.lower()
+                            if key not in seen_in_batch:
+                                seen_in_batch.add(key)
+                                accounts.append({'email': email})
+
+                    if not accounts:
                         send_message(chat_id, "*មិនរកឃើញអ៊ីមែលត្រឹមត្រូវ! សូមបញ្ចូលតាមទម្រង់៖*\n\n```\nl1jebywyzos2@10mail.info\nabc123@gmail.com\n```", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=ADD_ACCOUNT_KEYBOARD)
+                        return
+
+                    # Build set of all emails already in stock
+                    with _data_lock:
+                        existing_emails = {
+                            a.get('email', '').lower()
+                            for accs in accounts_data.get('account_types', {}).values()
+                            for a in accs
+                            if a.get('email')
+                        }
+
+                    # Also check emails already sold in purchase history
+                    try:
+                        sold_rows = _neon_query(
+                            "SELECT accounts FROM bot_purchase_history WHERE accounts IS NOT NULL"
+                        ).get('rows', []) or []
+                        for sr in sold_rows:
+                            sold_accs = sr.get('accounts') or []
+                            if isinstance(sold_accs, str):
+                                try:
+                                    sold_accs = json.loads(sold_accs)
+                                except Exception:
+                                    sold_accs = []
+                            for sa in sold_accs:
+                                if isinstance(sa, dict) and sa.get('email'):
+                                    existing_emails.add(sa['email'].lower())
+                    except Exception as sold_err:
+                        logger.warning(f"Could not fetch sold emails at input step: {sold_err}")
+
+                    duplicate_emails = [a['email'] for a in accounts if a['email'].lower() in existing_emails]
+                    new_accounts = [a for a in accounts if a['email'].lower() not in existing_emails]
+
+                    if duplicate_emails:
+                        dup_list = '\n'.join(duplicate_emails)
+                        if not new_accounts:
+                            send_message(chat_id,
+                                f"❌ *មិនអាចបញ្ចូលបាន!*\n\nEmail ទាំងអស់មានស្រាប់ក្នុងប្រព័ន្ធ ឬបានលក់រួចហើយ៖\n```\n{dup_list}\n```",
+                                reply_to_message_id=message_id, parse_mode="Markdown")
+                            return
+                        send_message(chat_id,
+                            f"⚠️ *Email ខាងក្រោមមានស្រាប់ ហើយត្រូវបានរំលង៖*\n```\n{dup_list}\n```",
+                            reply_to_message_id=message_id, parse_mode="Markdown")
+
+                    accounts = new_accounts
+                    with _data_lock:
+                        session['accounts'] = accounts
+                        session['state'] = 'waiting_for_account_type'
+                    save_sessions_async()
+                    count = len(accounts)
+                    send_message(chat_id, f"*បានបញ្ចូល Account ចំនួន {count}\n\nសូមបញ្ចូលប្រភេទ Account៖*", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=ADD_ACCOUNT_KEYBOARD)
                     return
                 
                 elif session['state'] == 'waiting_for_account_type':
