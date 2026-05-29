@@ -1598,10 +1598,14 @@ def _export_buyers_report_inline(chat_id):
         total_coupons = 0
         for uid, info in grouped.items():
             full_name = (info['first_name'] + ' ' + info['last_name']).strip() or '(no name)'
+            seen_emails = set()
             all_emails = []
             for p in info['purchases']:
-                all_emails.extend(p['emails'])
-                total_coupons += len(p['emails'])
+                for em in p['emails']:
+                    if em.lower() not in seen_emails:
+                        seen_emails.add(em.lower())
+                        all_emails.append(em)
+            total_coupons += len(all_emails)
             lines.append(f"ឈ្មោះ : {full_name}")
             lines.append(f"ID    : {uid}")
             lines.append("")
@@ -2798,13 +2802,29 @@ def handle_message(update):
                         # Validate price matches existing price for this account type
                         with _data_lock:
                             existing_price = accounts_data.get('prices', {}).get(account_type)
-                            # Only check emails currently in stock (not already sold)
+                            # Check emails in stock AND already sold (purchase history)
                             all_existing_emails = {
                                 a.get('email', '').lower()
                                 for accs in accounts_data.get('account_types', {}).values()
                                 for a in accs
                                 if a.get('email')
                             }
+                        try:
+                            sold_rows = _neon_query(
+                                "SELECT accounts FROM bot_purchase_history WHERE accounts IS NOT NULL"
+                            ).get('rows', []) or []
+                            for sr in sold_rows:
+                                sold_accs = sr.get('accounts') or []
+                                if isinstance(sold_accs, str):
+                                    try:
+                                        sold_accs = json.loads(sold_accs)
+                                    except Exception:
+                                        sold_accs = []
+                                for sa in sold_accs:
+                                    if isinstance(sa, dict) and sa.get('email'):
+                                        all_existing_emails.add(sa['email'].lower())
+                        except Exception as sold_err:
+                            logger.warning(f"Could not fetch sold emails for dup check: {sold_err}")
 
                         if existing_price is not None and round(existing_price, 4) != round(price, 4):
                             send_message(chat_id,
