@@ -1622,6 +1622,9 @@ def _export_buyers_report_inline(chat_id):
         if resp.status_code >= 400 or not resp.json().get('ok'):
             logger.error(f"sendDocument failed: {resp.text}")
             send_message(chat_id, "❌ បរាជ័យក្នុងការផ្ញើ​ឯកសារ", reply_to_message_id=False)
+        else:
+            send_message(chat_id, "↩️ ត្រឡប់ទៅកំណត់", reply_to_message_id=False,
+                         reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
     except Exception as e:
         logger.error(f"buyers export failed: {e}")
         send_message(chat_id, f"❌ Error: <code>{html.escape(str(e))}</code>", parse_mode="HTML", reply_to_message_id=False)
