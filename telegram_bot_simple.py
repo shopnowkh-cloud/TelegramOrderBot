@@ -1595,31 +1595,25 @@ def _export_buyers_report_inline(chat_id):
             })
         lines = []
         import datetime as _dt
-        _now_str = _dt.datetime.now(_dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
-        lines.append(f"Buyers Report — generated {_now_str}")
-        lines.append(f"Total buyers: {len(grouped)}")
-        lines.append("=" * 70)
-        total_emails = 0
+        total_coupons = 0
         for uid, info in grouped.items():
             full_name = (info['first_name'] + ' ' + info['last_name']).strip() or '(no name)'
-            uname = f"@{info['username']}" if info['username'] else '—'
-            lines.append("")
-            lines.append(f"User ID : {uid}")
-            lines.append(f"Name    : {full_name}")
-            lines.append(f"Username: {uname}")
-            lines.append(f"Purchases ({len(info['purchases'])}):")
+            all_emails = []
             for p in info['purchases']:
-                lines.append(f"  [{p['when']}] {p['type']} x{p['qty']} = ${p['price']}")
-                for em in p['emails']:
-                    lines.append(f"      • {em}")
-                    total_emails += 1
-            lines.append("-" * 70)
-        lines.append("")
-        lines.append(f"Total emails delivered: {total_emails}")
+                all_emails.extend(p['emails'])
+                total_coupons += len(p['emails'])
+            lines.append(f"ឈ្មោះ : {full_name}")
+            lines.append(f"ID    : {uid}")
+            if all_emails:
+                for em in all_emails:
+                    lines.append(f"គូប៉ុង : {em}")
+            else:
+                lines.append("គូប៉ុង : —")
+            lines.append("")
         txt = "\n".join(lines).encode('utf-8')
         filename = f"buyers_{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
         files = {'document': (filename, txt, 'text/plain')}
-        data = {'chat_id': chat_id, 'caption': f"📋 Buyers report — {len(grouped)} អ្នក​ទិញ, {total_emails} email"}
+        data = {'chat_id': chat_id, 'caption': f"📋 របាយការណ៍ទិញ — {len(grouped)} នាក់, {total_coupons} គូប៉ុង"}
         resp = http.post(f"{API_URL}/sendDocument", data=data, files=files, timeout=30)
         if resp.status_code >= 400 or not resp.json().get('ok'):
             logger.error(f"sendDocument failed: {resp.text}")
