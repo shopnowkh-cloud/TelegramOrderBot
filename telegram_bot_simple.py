@@ -1333,12 +1333,10 @@ def send_account_selection_inline(chat_id):
         return
     for account_type, accounts in types.items():
         count = len(accounts)
-        if count > 0:
-            btn_text = f"ទិញ {account_type} - មានក្នុងស្តុក {count}"
-            cb = f"buy:{_type_callback_id(account_type)}"
-        else:
-            btn_text = f"🪤 {account_type} - អស់ស្តុក"
-            cb = f"out_of_stock:{_type_callback_id(account_type)}"
+        if count <= 0:
+            continue
+        btn_text = f"ទិញ {account_type} - មានក្នុងស្តុក {count}"
+        cb = f"buy:{_type_callback_id(account_type)}"
         inline_rows.append([{'text': btn_text, 'callback_data': cb}])
     if not inline_rows:
         return
