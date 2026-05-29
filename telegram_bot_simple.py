@@ -268,6 +268,8 @@ def _neon_query(query, params=None, _retries=3, _backoff=2):
     for attempt in range(1, _retries + 1):
         try:
             resp = http.post(_neon_api_url, headers=_neon_headers, json=body, timeout=20)
+            if not resp.ok:
+                logger.warning(f"Neon query HTTP {resp.status_code}: {resp.text[:500]}")
             resp.raise_for_status()
             return resp.json()
         except Exception as e:
@@ -343,7 +345,7 @@ def _init_db():
         """)
         _neon_query("""
             ALTER TABLE bot_known_users
-            ADD COLUMN IF NOT EXISTS admin_notified BOOLEAN DEFAULT FALSE
+            ADD COLUMN IF NOT EXISTS admin_notified INTEGER DEFAULT 0
         """)
         _neon_query("""
             CREATE TABLE IF NOT EXISTS bot_sent_verifications (
@@ -382,10 +384,10 @@ def _init_db():
         # mark admin_notified=TRUE to avoid spamming the admin about them.
         _neon_query("""
             INSERT INTO bot_known_users (user_id, first_seen, last_seen, admin_notified)
-            SELECT DISTINCT user_id, MIN(purchased_at), MAX(purchased_at), TRUE
+            SELECT DISTINCT user_id, MIN(purchased_at), MAX(purchased_at), 1
             FROM bot_purchase_history
             GROUP BY user_id
-            ON CONFLICT (user_id) DO UPDATE SET admin_notified = TRUE
+            ON CONFLICT (user_id) DO UPDATE SET admin_notified = 1
         """)
         # Backfill bot_email_buyer_map from all existing purchase history rows.
         # Use DISTINCT ON to keep only the most-recent purchase per email,
@@ -399,8 +401,8 @@ def _init_db():
                 purchased_at
             FROM bot_purchase_history,
                  jsonb_array_elements(
-                     CASE jsonb_typeof(accounts)
-                         WHEN 'array' THEN accounts
+                     CASE jsonb_typeof(accounts::jsonb)
+                         WHEN 'array' THEN accounts::jsonb
                          ELSE '[]'::jsonb
                      END
                  ) AS acc
@@ -958,13 +960,13 @@ def notify_admin_new_user(user):
             try:
                 _neon_query("""
                     INSERT INTO bot_known_users (user_id, first_name, last_name, username, first_seen, last_seen, admin_notified)
-                    VALUES ($1, $2, $3, $4, NOW(), NOW(), TRUE)
+                    VALUES ($1, $2, $3, $4, NOW(), NOW(), 1)
                     ON CONFLICT (user_id) DO UPDATE SET
                         first_name = EXCLUDED.first_name,
                         last_name = EXCLUDED.last_name,
                         username = EXCLUDED.username,
                         last_seen = NOW(),
-                        admin_notified = TRUE
+                        admin_notified = 1
                 """, [str(uid), first, last, username or ''])
             except Exception as e:
                 logger.error(f"Failed to record known user {uid}: {e}")
@@ -1193,24 +1195,6 @@ def send_photo_url(chat_id, photo_url, caption=None, parse_mode=None, reply_mark
         logger.error(f"Failed to send photo URL: {e}")
         return None
 
-def copy_message(to_chat_id, from_chat_id, message_id):
-    """Copy a message from one chat to another without showing a forwarded header."""
-    url = f"{API_URL}/copyMessage"
-    data = {
-        'chat_id': to_chat_id,
-        'from_chat_id': from_chat_id,
-        'message_id': message_id
-    }
-    try:
-        response = http.post(url, data=data, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        body = ''
-        if hasattr(e, 'response') and e.response is not None:
-            body = e.response.text
-        logger.error(f"Failed to copy channel message: {e} | body: {body}")
-        return None
 
 def _is_configured_channel(chat_id):
     return CHANNEL_ID and str(chat_id) == str(CHANNEL_ID)
