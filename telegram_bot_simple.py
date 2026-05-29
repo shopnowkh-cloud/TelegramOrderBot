@@ -1415,6 +1415,19 @@ ADD_ACCOUNT_KEYBOARD = {
     'is_persistent': True
 }
 
+def _build_account_type_keyboard():
+    """Build a reply keyboard with all existing account types (2 per row) plus a back button."""
+    with _data_lock:
+        types = sorted(accounts_data.get('account_types', {}).keys())
+    rows = []
+    for i in range(0, len(types), 2):
+        row = [{'text': types[i]}]
+        if i + 1 < len(types):
+            row.append({'text': types[i + 1]})
+        rows.append(row)
+    rows.append([{'text': BTN_BACK_SETTINGS}])
+    return {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
+
 # Set of submenu/leaf button labels admins can press; used to keep them out of the
 # unrecognized-command fallback.
 ADMIN_BUTTON_LABELS = {
@@ -2827,7 +2840,7 @@ def handle_message(update):
                         session['state'] = 'waiting_for_account_type'
                     save_sessions_async()
                     count = len(accounts)
-                    send_message(chat_id, f"*បានបញ្ចូល Account ចំនួន {count}\n\nសូមបញ្ចូលប្រភេទ Account៖*", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=ADD_ACCOUNT_KEYBOARD)
+                    send_message(chat_id, f"*បានបញ្ចូល Account ចំនួន {count}\n\nសូមបញ្ចូលប្រភេទ Account៖*", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=_build_account_type_keyboard())
                     return
                 
                 elif session['state'] == 'waiting_for_account_type':
