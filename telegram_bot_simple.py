@@ -1499,13 +1499,29 @@ CONFIRM_REPLY_KEYBOARD = {
 
 
 def send_admin_settings_menu(chat_id):
-    """Open the admin settings reply keyboard."""
+    """Open the admin settings reply keyboard.
+    Hides the 🗑 លុបប្រភេទ button when no account types exist."""
+    with _data_lock:
+        has_types = bool(accounts_data.get('account_types'))
+    first_row = [{'text': BTN_ADD_ACCOUNT}]
+    if has_types:
+        first_row.append({'text': BTN_DELETE_TYPE})
+    keyboard = {
+        'keyboard': [
+            first_row,
+            [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
+            [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
+            [{'text': BTN_MAINTENANCE}],
+        ],
+        'resize_keyboard': True,
+        'is_persistent': True
+    }
     send_message(
         chat_id,
         "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖",
         parse_mode="HTML",
         reply_to_message_id=False,
-        reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
+        reply_markup=keyboard
     )
 
 
