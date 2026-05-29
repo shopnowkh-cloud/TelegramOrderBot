@@ -15,3 +15,9 @@ python-telegram-bot
 qrcode
 requests
 telegram
+bakong-khqr[image]
+pillow
+python-telegram-bot
+qrcode
+requests
+telegram
