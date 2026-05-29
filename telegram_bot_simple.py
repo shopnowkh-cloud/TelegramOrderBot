@@ -2325,16 +2325,15 @@ def handle_callback_query(update):
         # Handle cancel purchase
         elif callback_data == 'cancel_purchase':
             answer_callback(callback_query['id'])
+            # Always delete the KHQR message (the message containing this button)
+            btn_message_id = callback_query['message']['message_id']
+            delete_message_async(chat_id, btn_message_id)
             session = user_sessions.get(user_id)
-            photo_message_id = session.get('photo_message_id') if session else None
-            if photo_message_id:
-                delete_message_async(chat_id, photo_message_id)
-            qr_message_id = session.get('qr_message_id') if session else None
-            if qr_message_id:
-                delete_message_async(chat_id, qr_message_id)
-            dot_msg_id = session.get('dot_message_id') if session else None
-            if dot_msg_id:
-                delete_message_async(chat_id, dot_msg_id)
+            if session:
+                for key in ('photo_message_id', 'qr_message_id', 'dot_message_id'):
+                    mid = session.get(key)
+                    if mid and mid != btn_message_id:
+                        delete_message_async(chat_id, mid)
             with _data_lock:
                 if user_id in user_sessions:
                     del user_sessions[user_id]
