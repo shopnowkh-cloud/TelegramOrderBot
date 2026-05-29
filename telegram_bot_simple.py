@@ -2361,11 +2361,24 @@ def handle_callback_query(update):
 
         # Handle cancel purchase
         elif callback_data == 'cancel_purchase':
+            # Check payment status once before cancelling
+            session = user_sessions.get(user_id)
+            if not session or session.get('state') != 'payment_pending':
+                session = get_pending_payment(user_id)
+            md5 = session.get('md5_hash') if session else None
+            if md5:
+                is_paid, payment_data = check_payment_status(md5)
+                if is_paid:
+                    answer_callback(callback_query['id'], '✅ ការបង់ប្រាក់បានបញ្ជាក់!')
+                    user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                    deliver_accounts(chat_id, user_id, session, payment_data=payment_data, user_name=user_name)
+                    delete_pending_payment_async(user_id)
+                    save_sessions_async()
+                    return
             answer_callback(callback_query['id'])
-            # Always delete the KHQR message (the message containing this button)
+            # No payment found — proceed with cancellation
             btn_message_id = callback_query['message']['message_id']
             delete_message_async(chat_id, btn_message_id)
-            session = user_sessions.get(user_id)
             if session:
                 for key in ('photo_message_id', 'qr_message_id', 'dot_message_id'):
                     mid = session.get(key)
