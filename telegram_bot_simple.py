@@ -1604,11 +1604,12 @@ def _export_buyers_report_inline(chat_id):
                 total_coupons += len(p['emails'])
             lines.append(f"ឈ្មោះ : {full_name}")
             lines.append(f"ID    : {uid}")
+            lines.append("")
             if all_emails:
                 for em in all_emails:
-                    lines.append(f"គូប៉ុង : {em}")
+                    lines.append(em)
             else:
-                lines.append("គូប៉ុង : —")
+                lines.append("—")
             lines.append("")
         txt = "\n".join(lines).encode('utf-8')
         filename = f"buyers_{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
