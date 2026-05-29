@@ -1502,7 +1502,10 @@ def send_admin_settings_menu(chat_id):
     """Open the admin settings reply keyboard.
     Hides the 🗑 លុបប្រភេទ button when no account types exist."""
     with _data_lock:
-        has_types = bool(accounts_data.get('account_types'))
+        has_types = any(
+            len(v) > 0
+            for v in accounts_data.get('account_types', {}).values()
+        )
     first_row = [{'text': BTN_ADD_ACCOUNT}]
     if has_types:
         first_row.append({'text': BTN_DELETE_TYPE})
