@@ -1981,6 +1981,12 @@ def handle_callback_query(update):
         
         # Handle buy button clicks with reply quote functionality
         if callback_data.startswith('buy:') or callback_data.startswith('buy_'):
+            # Block new purchase if one is already pending payment
+            existing_session = user_sessions.get(user_id)
+            if existing_session and existing_session.get('state') == 'payment_pending':
+                answer_callback(callback_query['id'], '⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ បោះបង់ការទិញនោះសិន។', True)
+                return
+
             if callback_data.startswith('buy:'):
                 account_type = _account_type_from_callback_id(callback_data[4:])
             else:
