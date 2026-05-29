@@ -1292,7 +1292,7 @@ def send_account_selection_inline(chat_id):
         send_message(chat_id, "សូមអភ័យទោស អស់ពីស្តុក 🪤", reply_to_message_id=False)
         return
     inline_keyboard = {'inline_keyboard': inline_rows}
-    send_message(chat_id, "<b>សូមជ្រើសរើស Account ដើម្បីទិញ៖</b>",
+    send_message(chat_id, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>",
                  reply_to_message_id=False, reply_markup=inline_keyboard, parse_mode="HTML")
 
 
