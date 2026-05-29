@@ -1716,7 +1716,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(chat_id, "🚫 បានបោះបង់ការកំណត់", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+        send_message(chat_id, "🚫 បានបោះបង់ការកំណត់", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
         return True
 
     # ↩️ Back-to-settings button: cancel input and return to settings menu
@@ -1739,7 +1739,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                 del user_sessions[user_id]
         save_sessions_async()
         send_message(chat_id, f"✅ បានប្តូរឈ្មោះ Payment ទៅជា <b>{html.escape(PAYMENT_NAME)}</b>",
-                     parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+                     parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
         return True
 
     if key == 'bakong':
@@ -1763,7 +1763,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         send_message(
             chat_id,
             f"✅ បានប្តូរ Bakong token (Prefix៖ <code>{html.escape(raw[:10])}…</code>)",
-            parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id)
+            parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
         )
         return True
 
@@ -1779,7 +1779,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                 if user_id in user_sessions:
                     del user_sessions[user_id]
             save_sessions_async()
-            send_message(chat_id, "✅ បានលុប Channel ID", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+            send_message(chat_id, "✅ បានលុប Channel ID", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
             return True
         CHANNEL_ID = raw
         set_setting('TELEGRAM_CHANNEL_ID', raw)
@@ -1791,7 +1791,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             chat_id,
             f"✅ បានកំណត់ Channel ID ទៅជា <code>{html.escape(raw)}</code>\n"
             f"សូមប្រាកដថា bot ជា admin/member ក្នុង channel នោះ។",
-            parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id)
+            parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
         )
         return True
 
@@ -1803,7 +1803,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             send_message(chat_id, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
             return True
         if target_id == ADMIN_ID:
-            send_message(chat_id, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+            send_message(chat_id, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
             with _data_lock:
                 if user_id in user_sessions:
                     del user_sessions[user_id]
@@ -1820,7 +1820,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+        send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
         return True
 
     if key == 'broadcast':
@@ -2243,7 +2243,7 @@ def handle_callback_query(update):
                 CHANNEL_ID = ""
                 set_setting('TELEGRAM_CHANNEL_ID', '')
                 delete_message_async(chat_id, menu_msg_id)
-                send_message(chat_id, "✅ បានលុប Channel ID", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+                send_message(chat_id, "✅ បានលុប Channel ID", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                 return
 
             if action == 'admins':
