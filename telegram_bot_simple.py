@@ -2807,9 +2807,13 @@ def handle_message(update):
                     if duplicate_emails:
                         dup_list = '\n'.join(duplicate_emails)
                         if not new_accounts:
+                            with _data_lock:
+                                user_sessions.pop(user_id, None)
+                            save_sessions_async()
                             send_message(chat_id,
                                 f"❌ *មិនអាចបញ្ចូលបាន!*\n\nEmail ទាំងអស់មានស្រាប់ក្នុងប្រព័ន្ធ ឬបានលក់រួចហើយ៖\n```\n{dup_list}\n```",
-                                reply_to_message_id=message_id, parse_mode="Markdown")
+                                reply_to_message_id=message_id, parse_mode="Markdown",
+                                reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                             return
                         send_message(chat_id,
                             f"⚠️ *Email ខាងក្រោមមានស្រាប់ ហើយត្រូវបានរំលង៖*\n```\n{dup_list}\n```",
