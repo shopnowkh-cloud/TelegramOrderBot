@@ -2021,17 +2021,13 @@ def _remind_pending_payment(chat_id, session):
         send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
 
 
-def _purchase_notification_targets():
-    targets = [ADMIN_ID]
-    if CHANNEL_ID and str(CHANNEL_ID) != str(ADMIN_ID):
-        targets.append(CHANNEL_ID)
-    return targets
-
-
 def send_purchase_notification(message):
-    for target in _purchase_notification_targets():
-        rm = ADMIN_REPLY_KEYBOARD if str(target) == str(ADMIN_ID) else "no_keyboard"
-        send_message(target, message, parse_mode="HTML", reply_to_message_id=False, reply_markup=rm)
+    """Send successful payment notification to channel only.
+    Falls back to admin private chat if no channel is configured."""
+    if CHANNEL_ID:
+        send_message(CHANNEL_ID, message, parse_mode="HTML", reply_to_message_id=False, reply_markup="no_keyboard")
+    else:
+        send_message(ADMIN_ID, message, parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_REPLY_KEYBOARD)
 
 
 def handle_callback_query(update):
@@ -3104,14 +3100,14 @@ def deliver_accounts(chat_id, user_id, session, payment_data=None, user_name='')
         amount = session.get('total_price', 0)
         buyer_label = f"{user_name} ({user_id})" if user_name else str(user_id)
         admin_msg = (
-            "🎉 <b>ទទួលបានការបង់ប្រាក់ជោគជ័យ</b>\n"
+            "🎉 ទទួលបានការបង់ប្រាក់ជោគជ័យ\n"
             "━━━━━━━━━━━━━━━━━━━\n"
-            f"🆔 <b>ឈ្មោះអ្នកទិញ(ID):</b> {buyer_label}\n"
-            f"💵 <b>ទឹកប្រាក់:</b> {amount} USD\n"
-            f"👤 <b>ពីធនាគារ:</b> <code>{from_account}</code>\n"
-            f"📝 <b>ចំណាំ:</b> {memo}\n"
-            f"🧾 <b>លេខយោង:</b> <code>{ref}</code>\n"
-            f"⏰ <b>ម៉ោង:</b> {now_str}"
+            f"🆔 ឈ្មោះអ្នកទិញ(ID): {buyer_label}\n"
+            f"💵 ទឹកប្រាក់: {amount} USD\n"
+            f"👤 ពីធនាគារ: {from_account}\n"
+            f"📝 ចំណាំ: {memo}\n"
+            f"🧾 លេខយោង: {ref}\n"
+            f"⏰ ម៉ោង: {now_str}"
         )
         send_purchase_notification(admin_msg)
     except Exception as e:
