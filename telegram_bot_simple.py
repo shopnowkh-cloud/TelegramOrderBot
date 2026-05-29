@@ -1984,7 +1984,8 @@ def handle_callback_query(update):
             # Block new purchase if one is already pending payment
             existing_session = user_sessions.get(user_id)
             if existing_session and existing_session.get('state') == 'payment_pending':
-                answer_callback(callback_query['id'], '⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ បោះបង់ការទិញនោះសិន។', True)
+                answer_callback(callback_query['id'], '⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។', True)
+                delete_message_async(chat_id, callback_query['message']['message_id'])
                 return
 
             if callback_data.startswith('buy:'):
@@ -2401,6 +2402,10 @@ def handle_message(update):
 
         if text.strip() == '/start':
             logger.info(f"User {user_id} triggered account selection interface")
+            existing = user_sessions.get(user_id)
+            if existing and existing.get('state') == 'payment_pending':
+                send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
+                return
             with _data_lock:
                 had_session = user_id in user_sessions
                 if had_session:
@@ -2658,12 +2663,9 @@ def handle_message(update):
         if user_id in user_sessions:
             session = user_sessions[user_id]
 
-            # Handle stale payment_pending session — silently clear and show menu
+            # Block any text while payment is pending — remind user to pay or cancel
             if session.get('state') == 'payment_pending':
-                with _data_lock:
-                    del user_sessions[user_id]
-                save_sessions_async()
-                show_account_selection(chat_id)
+                send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
                 return
 
             # Quantity is selected via inline buttons only — any text shows account selection
@@ -2729,7 +2731,10 @@ def handle_message(update):
 
         # Handle non-admin users
         if not is_admin(user_id):
-            # For unrecognized commands, show account selection
+            existing = user_sessions.get(user_id)
+            if existing and existing.get('state') == 'payment_pending':
+                send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
+                return
             logger.info(f"Non-admin user {user_id} sent unrecognized command, showing account selection")
             show_account_selection_local()
             return
