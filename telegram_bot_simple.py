@@ -3088,6 +3088,9 @@ def deliver_accounts(chat_id, user_id, session, payment_data=None, user_name='')
 
     send_message(chat_id, accounts_message, parse_mode="HTML", message_effect_id="5046509860389126442", reply_markup=_main_kb(user_id))
 
+    # Show account selection menu right after delivery
+    send_account_selection_inline(chat_id)
+
     # Notify admin/channel about successful payment
     try:
         import datetime
