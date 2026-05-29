@@ -1592,6 +1592,7 @@ def _show_delete_type_menu_inline(chat_id, user_id=None):
     if not types:
         send_message(chat_id, "⚠️ <b>មិនមានប្រភេទ Account ណាមួយទេ!</b>",
                      parse_mode="HTML", reply_to_message_id=None)
+        send_admin_settings_menu(chat_id)
         return
     rows = []
     labels_map = {}
