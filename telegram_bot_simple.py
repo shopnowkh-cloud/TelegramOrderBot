@@ -3137,25 +3137,15 @@ def _stop_clone2():
     _clone2_stop_event = None
 
 def _show_clone_main_menu(chat_id):
-    """Show the top-level Clone Bot menu: 2 features + clone section."""
-    with _clone_bots_lock:
-        count = len(_clone_bots_list)
-    active_bots = sum(1 for b in _clone_bots_list if b.get('thread') and b['thread'].is_alive())
-
-    clone_status = f"🟢 {active_bots}/{count}" if active_bots else (f"🔴 {count} Bot" if count else "🔴 គ្មាន")
-
+    """Show the top-level Clone Bot menu: 2 features."""
     msg = (
         "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
-        "━━━━ មុខងារ ━━━━\n"
         "  🎙 <b>បង្កើតសំឡេង Ai</b>\n"
-        "  🌐 <b>បកប្រែភាសា</b>\n\n"
-        "━━━━ Clone ━━━━\n"
-        f"  🤖 <b>Clone Bot</b> — {clone_status}"
+        "  🌐 <b>បកប្រែភាសា</b>"
     )
     kb = {'inline_keyboard': [
         [{'text': "🎙 បង្កើតសំឡេង Ai", 'callback_data': 'clone_feat_voice'}],
         [{'text': "🌐 បកប្រែភាសា",     'callback_data': 'clone_feat_translate'}],
-        [{'text': f"🤖 Clone Bot  ({clone_status})", 'callback_data': 'clone_feat_bots'}],
     ]}
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
