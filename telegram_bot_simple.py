@@ -70,6 +70,12 @@ _clone_bot_prefs: dict = {}
 _clone_bots_list: list = []
 _clone_bots_lock  = threading.Lock()
 
+# ── Translate Bot (separate from TTS Clone Bot) ───────────────────────────────
+TRANSLATE_BOT_TOKEN  = ""
+TRANSLATE_BOT_ACTIVE = False
+_translate_bot_thread = None
+_translate_bot_prefs: dict = {}   # {user_id: {lang_code, lang_name}}
+
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
     """Call a Telegram Bot API method. Returns the 'result' field or None."""
@@ -841,6 +847,13 @@ if _saved_clone_token:
 _saved_clone_active = get_setting('CLONE_BOT_ACTIVE')
 if _saved_clone_active:
     CLONE_BOT_ACTIVE = (str(_saved_clone_active).lower() == 'true')
+_saved_tr_token = get_setting('TRANSLATE_BOT_TOKEN')
+if _saved_tr_token:
+    TRANSLATE_BOT_TOKEN = _saved_tr_token
+    logger.info("Loaded TRANSLATE_BOT_TOKEN from DB")
+_saved_tr_active = get_setting('TRANSLATE_BOT_ACTIVE')
+if _saved_tr_active:
+    TRANSLATE_BOT_ACTIVE = (str(_saved_tr_active).lower() == 'true')
 
 # ── Session / account storage ─────────────────────────────────────────────────
 user_sessions: dict = {}
@@ -1256,12 +1269,16 @@ BTN_DELETE_CONFIRM  = '✅ បញ្ជាក់លុប'
 BTN_DELETE_CANCEL   = '🚫 បោះបង់ការលុប'
 BTN_BROADCAST_CONFIRM = '✅ បញ្ជាក់ផ្សាយ'
 BTN_BROADCAST_CANCEL  = '🚫 បោះបង់ការផ្សាយ'
-BTN_CLONE_BOT         = 'បង្កើតសំឡេង Ai'
-BTN_CLONE_START       = '▶️ ចាប់ផ្តើម Clone Bot'
-BTN_CLONE_STOP        = '⏹ បញ្ឈប់ Clone Bot'
-BTN_CLONE_SET_TOKEN   = '🔑 កំណត់ Token'
-BTN_CLONE_TOKEN_CLEAR = '🗑 លុប Token'
-BTN_TRANSLATE         = '🌐 បកប្រែភាសា'
+BTN_CLONE_BOT         = '🎙 TTS Bot'
+BTN_CLONE_START       = '▶️ ចាប់ផ្តើម TTS Bot'
+BTN_CLONE_STOP        = '⏹ បញ្ឈប់ TTS Bot'
+BTN_CLONE_SET_TOKEN   = '🔑 Token — TTS'
+BTN_CLONE_TOKEN_CLEAR = '🗑 លុប — TTS'
+BTN_TRANSLATE         = '🌐 Translate Bot'
+BTN_TR_START          = '▶️ ចាប់ផ្តើម Translate Bot'
+BTN_TR_STOP           = '⏹ បញ្ឈប់ Translate Bot'
+BTN_TR_SET_TOKEN      = '🔑 Token — Translate'
+BTN_TR_TOKEN_CLEAR    = '🗑 លុប — Translate'
 
 TRANSLATE_LANGUAGES = {
     "km": "🇰🇭 ខ្មែរ",
@@ -1339,7 +1356,7 @@ CLONE_BOT_MENU_KEYBOARD_ACTIVE = {
     'keyboard': [
         [{'text': BTN_CLONE_STOP}],
         [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
-        [{'text': BTN_CLONE_BOT}, {'text': BTN_TRANSLATE}],
+        [{'text': BTN_TRANSLATE}],
         [{'text': BTN_BACK_SETTINGS}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
@@ -1347,7 +1364,23 @@ CLONE_BOT_MENU_KEYBOARD_INACTIVE = {
     'keyboard': [
         [{'text': BTN_CLONE_START}],
         [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
-        [{'text': BTN_CLONE_BOT}, {'text': BTN_TRANSLATE}],
+        [{'text': BTN_TRANSLATE}],
+        [{'text': BTN_BACK_SETTINGS}],
+    ], 'resize_keyboard': True, 'is_persistent': True
+}
+TRANSLATE_BOT_MENU_KB_ACTIVE = {
+    'keyboard': [
+        [{'text': BTN_TR_STOP}],
+        [{'text': BTN_TR_SET_TOKEN}, {'text': BTN_TR_TOKEN_CLEAR}],
+        [{'text': BTN_CLONE_BOT}],
+        [{'text': BTN_BACK_SETTINGS}],
+    ], 'resize_keyboard': True, 'is_persistent': True
+}
+TRANSLATE_BOT_MENU_KB_INACTIVE = {
+    'keyboard': [
+        [{'text': BTN_TR_START}],
+        [{'text': BTN_TR_SET_TOKEN}, {'text': BTN_TR_TOKEN_CLEAR}],
+        [{'text': BTN_CLONE_BOT}],
         [{'text': BTN_BACK_SETTINGS}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
@@ -1643,7 +1676,7 @@ def _start_add_account_flow(chat_id, user_id, message_id):
     )
 
 def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
-    global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, CLONE_BOT_TOKEN
+    global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN
 
     raw          = (text or '').strip()
     cancel_words = {'បោះបង់', '🚫 បោះបង់'}
@@ -1789,11 +1822,45 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         save_sessions_async()
         send_message(
             chat_id,
-            f"✅ <b>ស្ថាបនា Clone Bot ជោគជ័យ!</b>\n\n"
+            f"✅ <b>ស្ថាបនា TTS Bot ជោគជ័យ!</b>\n\n"
             f"🤖 Bot: <b>{html.escape(bot_name)}</b> (@{html.escape(bot_username)})\n\n"
-            f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក Clone Bot</i>",
+            f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក TTS Bot</i>",
             parse_mode="HTML", reply_to_message_id=False,
             reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE
+        )
+        return True
+
+    if key == 'translate_token':
+        if not raw:
+            send_message(chat_id, "សូម​ផ្ញើ Token របស់ Translate Bot (ឬ​ចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            return True
+        try:
+            test_resp = http.get(f"https://api.telegram.org/bot{raw}/getMe", timeout=10).json()
+            if not test_resp.get('ok'):
+                send_message(chat_id,
+                    f"❌ Token មិន​ត្រឹម​ត្រូវ: {test_resp.get('description', 'Unknown error')}",
+                    reply_to_message_id=False)
+                return True
+            bot_info = test_resp.get('result', {})
+            bot_name = bot_info.get('first_name', 'Bot')
+            bot_username = bot_info.get('username', '')
+        except Exception as e:
+            send_message(chat_id, f"❌ មិន​អាច​ភ្ជាប់ Telegram: {e}", reply_to_message_id=False)
+            return True
+        TRANSLATE_BOT_TOKEN = raw
+        set_setting('TRANSLATE_BOT_TOKEN', raw)
+        delete_message_async(chat_id, message_id)
+        with _data_lock:
+            if user_id in user_sessions:
+                del user_sessions[user_id]
+        save_sessions_async()
+        send_message(
+            chat_id,
+            f"✅ <b>ស្ថាបនា Translate Bot ជោគជ័យ!</b>\n\n"
+            f"🌐 Bot: <b>{html.escape(bot_name)}</b> (@{html.escape(bot_username)})\n\n"
+            f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក Translate Bot</i>",
+            parse_mode="HTML", reply_to_message_id=False,
+            reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE
         )
         return True
 
@@ -2294,7 +2361,7 @@ def handle_callback_query(update):
 
         elif callback_data == 'clone_feat_translate' and is_admin(user_id):
             answer_callback(callback_query['id'])
-            _show_clone_bot_menu(chat_id)
+            _show_translate_bot_menu(chat_id)
             return
 
         elif callback_data == 'cbm_list' and is_admin(user_id):
@@ -3031,6 +3098,131 @@ def _stop_clone_bot():
     CLONE_BOT_ACTIVE = False
     _clone_bot_thread = None
 
+# ── Translate Bot engine (text-only, no TTS) ──────────────────────────────────
+def _tr_api(base_url, method, **kwargs):
+    try:
+        resp = http.post(f"{base_url}{method}",
+                         json={k: v for k, v in kwargs.items() if v is not None}, timeout=15)
+        result = resp.json()
+        if result.get('ok'):
+            return result.get('result')
+        logger.debug(f"TR API {method}: {result.get('description')}")
+    except Exception as e:
+        logger.error(f"TR API {method} error: {e}")
+    return None
+
+def _translate_handle_update(base_url, update):
+    global _translate_bot_prefs
+    if 'callback_query' in update:
+        cq      = update['callback_query']
+        user_id = cq['from']['id']
+        data    = cq.get('data', '')
+        chat_id = cq.get('message', {}).get('chat', {}).get('id', user_id)
+        msg_id  = cq.get('message', {}).get('message_id')
+        _tr_api(base_url, 'answerCallbackQuery', callback_query_id=cq['id'])
+        if data.startswith('trl_lang_'):
+            lang_code = data[9:]
+            lang_name = TRANSLATE_LANGUAGES.get(lang_code, lang_code)
+            _translate_bot_prefs.setdefault(user_id, {})['lang_code'] = lang_code
+            _translate_bot_prefs[user_id]['lang_name'] = lang_name
+            if msg_id:
+                _tr_api(base_url, 'deleteMessage', chat_id=chat_id, message_id=msg_id)
+            _tr_api(base_url, 'sendMessage', chat_id=chat_id,
+                text=f"✅ <b>ភាសាបកប្រែ: {lang_name}</b>\n\n"
+                     f"💬 សូមផ្ញើអក្សរ — ខ្ញុំនឹងបកប្រែជា {lang_name} ភ្លាមៗ។",
+                parse_mode="HTML")
+        return
+
+    if 'message' not in update:
+        return
+    msg     = update['message']
+    user_id = msg.get('from', {}).get('id')
+    chat_id = msg.get('chat', {}).get('id')
+    text    = msg.get('text', '').strip()
+    if not text or not user_id:
+        return
+
+    items = list(TRANSLATE_LANGUAGES.items())
+    rows  = []
+    for i in range(0, len(items), 3):
+        rows.append([{'text': name, 'callback_data': f'trl_lang_{code}'}
+                     for code, name in items[i:i+3]])
+    lang_kb = {'inline_keyboard': rows}
+
+    if text.startswith('/start'):
+        _translate_bot_prefs.setdefault(user_id, {})
+        _tr_api(base_url, 'sendMessage', chat_id=chat_id,
+            text='🌐 <b>Translate Bot</b>\n\n'
+                 '<i>ជ្រើសរើសភាសា រួចផ្ញើអក្សរ — ខ្ញុំនឹងបកប្រែជូន។</i>',
+            parse_mode="HTML", reply_markup=lang_kb)
+        return
+
+    prefs     = _translate_bot_prefs.get(user_id, {})
+    lang_code = prefs.get('lang_code')
+    lang_name = prefs.get('lang_name', lang_code or '')
+
+    if not lang_code:
+        _tr_api(base_url, 'sendMessage', chat_id=chat_id,
+            text='🌐 <b>សូមជ្រើសរើសភាសាជាមុនសិន</b>',
+            parse_mode="HTML", reply_markup=lang_kb)
+        return
+
+    _tr_api(base_url, 'sendChatAction', chat_id=chat_id, action='typing')
+    translated = _translate_text(text, lang_code)
+    if translated:
+        _tr_api(base_url, 'sendMessage', chat_id=chat_id,
+            text=f"🌐 <b>{lang_name}</b>\n<blockquote>{html.escape(translated)}</blockquote>",
+            parse_mode="HTML")
+    else:
+        _tr_api(base_url, 'sendMessage', chat_id=chat_id,
+                text="❌ មានបញ្ហាក្នុងការបកប្រែ សូមព្យាយាមម្តងទៀត។")
+
+def _translate_bot_polling_loop(token):
+    global TRANSLATE_BOT_ACTIVE
+    base_url = f"https://api.telegram.org/bot{token}/"
+    offset   = None
+    logger.info(f"Translate Bot [{token[:10]}...] started")
+    try:
+        http.post(f"{base_url}deleteWebhook", json={'drop_pending_updates': False}, timeout=10)
+        logger.info("Translate Bot: webhook deleted, starting poll")
+    except Exception as e:
+        logger.warning(f"Translate Bot deleteWebhook failed: {e}")
+    while TRANSLATE_BOT_ACTIVE:
+        try:
+            params = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
+            if offset is not None:
+                params['offset'] = offset
+            resp = http.get(f"{base_url}getUpdates", params=params, timeout=40)
+            data = resp.json()
+            if data.get('ok'):
+                for upd in data.get('result', []):
+                    offset = upd['update_id'] + 1
+                    worker_pool.submit(_translate_handle_update, base_url, upd)
+            else:
+                logger.warning(f"Translate Bot getUpdates: {data.get('description')}")
+                time.sleep(3)
+        except Exception as e:
+            if TRANSLATE_BOT_ACTIVE:
+                logger.error(f"Translate Bot polling error: {e}")
+                time.sleep(3)
+    logger.info("Translate Bot polling stopped")
+
+def _start_translate_bot(token):
+    global _translate_bot_thread, TRANSLATE_BOT_ACTIVE
+    _stop_translate_bot()
+    TRANSLATE_BOT_ACTIVE = True
+    _translate_bot_thread = threading.Thread(
+        target=_translate_bot_polling_loop, args=(token,),
+        daemon=True, name="translate-bot"
+    )
+    _translate_bot_thread.start()
+    logger.info("Translate Bot thread started")
+
+def _stop_translate_bot():
+    global TRANSLATE_BOT_ACTIVE, _translate_bot_thread
+    TRANSLATE_BOT_ACTIVE = False
+    _translate_bot_thread = None
+
 # ── Multi-bot clone management ────────────────────────────────────────────────
 def _clone_bot_loop_v2(token, stop_event):
     base_url = f"https://api.telegram.org/bot{token}/"
@@ -3225,13 +3417,28 @@ def _show_clone_bot_menu(chat_id):
     token_disp = f"<code>{CLONE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់​កំណត់"
     status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
     msg = (
-        f"🤖 <b>បង្កើតសំឡេង Ai — Text to Voice</b>\n\n"
+        f"🎙 <b>TTS Bot — Text to Voice</b>\n\n"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
-        f"<i>Clone Bot នឹង​ប្តូរ​អក្សររបស់​អ្នក​ប្រើ​ជា​សំឡេង​ដោយ​ស្វ័យប្រវត្តិ</i>\n"
+        f"<i>Bot នឹង​ប្តូរ​អក្សររបស់​អ្នក​ប្រើ​ជា​សំឡេង​ដោយ​ស្វ័យប្រវត្តិ</i>\n"
         f"<i>🌐 គាំទ្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ລາວ · မြန်မာ · 日本語 ...</i>"
     )
     kb = CLONE_BOT_MENU_KEYBOARD_ACTIVE if is_running else CLONE_BOT_MENU_KEYBOARD_INACTIVE
+    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
+
+def _show_translate_bot_menu(chat_id):
+    token_ok   = bool(TRANSLATE_BOT_TOKEN)
+    is_running = TRANSLATE_BOT_ACTIVE and _translate_bot_thread and _translate_bot_thread.is_alive()
+    token_disp = f"<code>{TRANSLATE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់​កំណត់"
+    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
+    msg = (
+        f"🌐 <b>Translate Bot — បកប្រែភាសា</b>\n\n"
+        f"🔑 Token: {token_disp}\n"
+        f"📡 ស្ថានភាព: {status}\n\n"
+        f"<i>Bot នឹង​បកប្រែ​អក្សររបស់​អ្នក​ប្រើ​ជាភាសា​ដែល​ជ្រើស​ដោយ​ស្វ័យប្រវត្តិ</i>\n"
+        f"<i>🌍 គាំទ្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ລາວ · မြန်မာ · 日本語 · ...</i>"
+    )
+    kb = TRANSLATE_BOT_MENU_KB_ACTIVE if is_running else TRANSLATE_BOT_MENU_KB_INACTIVE
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
 def _show_clone_main_menu(chat_id):
@@ -3517,7 +3724,9 @@ def handle_message(update):
                 _show_clone_bot_menu(chat_id)
                 return
             if btn == BTN_TRANSLATE:
+                _show_translate_bot_menu(chat_id)
                 return
+            # ── TTS Bot controls ──────────────────────────────────────────────
             if btn == BTN_CLONE_START:
                 if not CLONE_BOT_TOKEN:
                     send_message(chat_id, "❌ សូម​កំណត់ Token ជា​មុន​សិន",
@@ -3526,20 +3735,20 @@ def handle_message(update):
                     return
                 _start_clone_bot(CLONE_BOT_TOKEN)
                 set_setting('CLONE_BOT_ACTIVE', 'true')
-                send_message(chat_id, "🟢 <b>Clone Bot ចាប់ផ្តើម​ដំណើរការ!</b>",
+                send_message(chat_id, "🟢 <b>TTS Bot ចាប់ផ្តើម​ដំណើរការ!</b>",
                              parse_mode="HTML", reply_to_message_id=False,
                              reply_markup=CLONE_BOT_MENU_KEYBOARD_ACTIVE)
                 return
             if btn == BTN_CLONE_STOP:
                 _stop_clone_bot()
                 set_setting('CLONE_BOT_ACTIVE', 'false')
-                send_message(chat_id, "🔴 <b>Clone Bot បាន​បញ្ឈប់</b>",
+                send_message(chat_id, "🔴 <b>TTS Bot បាន​បញ្ឈប់</b>",
                              parse_mode="HTML", reply_to_message_id=False,
                              reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
                 return
             if btn == BTN_CLONE_SET_TOKEN:
                 _prompt_admin_input(chat_id, user_id, 'clone_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b> របស់ Clone Bot\n\n"
+                    "🔑 សូម​ផ្ញើ <b>Bot Token</b> របស់ 🎙 TTS Bot\n\n"
                     "<i>ទទួលពី @BotFather → /mybots → API Token</i>")
                 return
             if btn == BTN_CLONE_TOKEN_CLEAR:
@@ -3547,9 +3756,43 @@ def handle_message(update):
                 CLONE_BOT_TOKEN = ""
                 set_setting('CLONE_BOT_TOKEN', '')
                 set_setting('CLONE_BOT_ACTIVE', 'false')
-                send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ Clone Bot</b>",
+                send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ TTS Bot</b>",
                              parse_mode="HTML", reply_to_message_id=False,
                              reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
+                return
+            # ── Translate Bot controls ────────────────────────────────────────
+            if btn == BTN_TR_START:
+                if not TRANSLATE_BOT_TOKEN:
+                    send_message(chat_id, "❌ សូម​កំណត់ Token ជា​មុន​សិន",
+                                 reply_to_message_id=False,
+                                 reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE)
+                    return
+                _start_translate_bot(TRANSLATE_BOT_TOKEN)
+                set_setting('TRANSLATE_BOT_ACTIVE', 'true')
+                send_message(chat_id, "🟢 <b>Translate Bot ចាប់ផ្តើម​ដំណើរការ!</b>",
+                             parse_mode="HTML", reply_to_message_id=False,
+                             reply_markup=TRANSLATE_BOT_MENU_KB_ACTIVE)
+                return
+            if btn == BTN_TR_STOP:
+                _stop_translate_bot()
+                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
+                send_message(chat_id, "🔴 <b>Translate Bot បាន​បញ្ឈប់</b>",
+                             parse_mode="HTML", reply_to_message_id=False,
+                             reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE)
+                return
+            if btn == BTN_TR_SET_TOKEN:
+                _prompt_admin_input(chat_id, user_id, 'translate_token',
+                    "🔑 សូម​ផ្ញើ <b>Bot Token</b> របស់ 🌐 Translate Bot\n\n"
+                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>")
+                return
+            if btn == BTN_TR_TOKEN_CLEAR:
+                _stop_translate_bot()
+                TRANSLATE_BOT_TOKEN = ""
+                set_setting('TRANSLATE_BOT_TOKEN', '')
+                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
+                send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ Translate Bot</b>",
+                             parse_mode="HTML", reply_to_message_id=False,
+                             reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE)
                 return
         if user_id in user_sessions:
             session = user_sessions[user_id]
@@ -3952,6 +4195,10 @@ def main():
         if _cb.get('active') and _cb.get('token'):
             _start_clone_bot_by_id(_cb['id'])
             logger.info(f"Clone Bot '{_cb['name']}' resumed")
+
+    if TRANSLATE_BOT_ACTIVE and TRANSLATE_BOT_TOKEN:
+        _start_translate_bot(TRANSLATE_BOT_TOKEN)
+        logger.info("Translate Bot resumed from saved state")
 
     try:
         _polling_loop()
