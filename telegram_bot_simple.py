@@ -2851,40 +2851,48 @@ def _clone_bot_loop_v2(token, stop_event):
     base_url = f"https://api.telegram.org/bot{token}/"
     offset   = None
     logger.info(f"Clone Bot [{token[:10]}...] started")
+    # ── Kick out any stale long-poll from a previous session ──────────────────
+    try:
+        http.get(f"{base_url}getUpdates",
+                 params={'timeout': 0, 'allowed_updates': ['message', 'callback_query']},
+                 timeout=10)
+    except Exception:
+        pass
+    # ─────────────────────────────────────────────────────────────────────────
     while not stop_event.is_set():
         try:
-            params = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
+            params = {'timeout': 10, 'allowed_updates': ['message', 'callback_query']}
             if offset is not None:
                 params['offset'] = offset
-            resp = http.get(f"{base_url}getUpdates", params=params, timeout=40)
+            resp = http.get(f"{base_url}getUpdates", params=params, timeout=15)
             data = resp.json()
             if data.get('ok'):
                 for upd in data.get('result', []):
                     offset = upd['update_id'] + 1
                     worker_pool.submit(_clone_handle_update, base_url, upd)
             else:
-                logger.warning(f"Clone Bot [{token[:10]}...]: {data.get('description')}")
-                stop_event.wait(3)
+                desc = data.get('description', '')
+                logger.warning(f"Clone Bot [{token[:10]}...]: {desc}")
+                stop_event.wait(5)
         except Exception as e:
             if not stop_event.is_set():
                 logger.error(f"Clone Bot [{token[:10]}...] error: {e}")
-                stop_event.wait(3)
+                stop_event.wait(5)
     logger.info(f"Clone Bot [{token[:10]}...] stopped")
 
 def _load_clone_bots():
     global _clone_bots_list
     try:
-        raw = get_setting('CLONE_BOTS_LIST')
-        if raw:
-            saved = json.loads(raw)
-        else:
+        raw   = get_setting('CLONE_BOTS_LIST')
+        saved = json.loads(raw) if raw else []
+        # Migrate from old single-bot setting if list is empty and old token exists
+        if not saved:
             old_tok = get_setting('CLONE_BOT_TOKEN') or CLONE_BOT_TOKEN
             if old_tok:
                 bid       = hashlib.md5(old_tok.encode()).hexdigest()[:8]
                 is_active = (get_setting('CLONE_BOT_ACTIVE') or '').lower() == 'true'
                 saved     = [{'id': bid, 'name': 'Clone Bot 1', 'token': old_tok, 'active': is_active}]
-            else:
-                saved = []
+                logger.info("Migrated old CLONE_BOT_TOKEN to CLONE_BOTS_LIST")
         with _clone_bots_lock:
             _clone_bots_list[:] = [
                 {'id': b['id'], 'name': b['name'], 'token': b['token'],
@@ -2912,6 +2920,11 @@ def _start_clone_bot_by_id(bot_id):
         bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
         if not bot or not bot.get('token'):
             return False
+        # Already running — nothing to do
+        if bot.get('thread') and bot['thread'].is_alive():
+            logger.info(f"Clone Bot {bot_id} already running, skip start")
+            return True
+        # Signal old thread to stop (it may still be alive momentarily)
         if bot.get('stop_event'):
             bot['stop_event'].set()
         ev = threading.Event()
