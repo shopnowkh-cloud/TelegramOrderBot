@@ -2291,6 +2291,7 @@ def handle_callback_query(update):
 
         elif callback_data == 'clone_feat_translate' and is_admin(user_id):
             answer_callback(callback_query['id'])
+            _show_clone_bot_menu(chat_id)
             return
 
         elif callback_data == 'cbm_list' and is_admin(user_id):
