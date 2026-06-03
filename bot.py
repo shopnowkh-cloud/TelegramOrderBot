@@ -3053,8 +3053,17 @@ def _clone_handle_update(base_url, update):
         elif data.startswith('ttv_speed:'):
             speed = data.split(':', 1)[1]
             _clone_bot_prefs.setdefault(user_id, {})['speed'] = speed
+            speed_kb = {'inline_keyboard': [[
+                {
+                    'text': f"✅ {s}" if s == speed else s,
+                    'callback_data': f"ttv_speed:{s}",
+                    **(({'style': 'success'}) if s == speed else {}),
+                }
+                for s in _TTV_SPEED_KEYS
+            ]]}
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-                       text=f"✅ ប្តូរល្បឿនទៅ <b>{speed}</b>", parse_mode="HTML")
+                       text="ជ្រើសរើសល្បឿនសំឡេង:",
+                       reply_markup=speed_kb)
         elif data.startswith('cln_lang_'):
             lang_code = data[9:]
             lang_name = TRANSLATE_LANGUAGES.get(lang_code, lang_code)
