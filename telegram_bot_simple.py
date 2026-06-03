@@ -2284,6 +2284,16 @@ def handle_callback_query(update):
                 return
             return
 
+        elif callback_data == 'clone_feat_bots' and is_admin(user_id):
+            answer_callback(callback_query['id'])
+            _show_clone_bots_list(chat_id)
+            return
+
+        elif callback_data == 'clone_feat_voice' and is_admin(user_id):
+            answer_callback(callback_query['id'])
+            _show_clone_bot_menu(chat_id)
+            return
+
         elif callback_data == 'cbm_list' and is_admin(user_id):
             answer_callback(callback_query['id'])
             _show_clone_bots_list(chat_id)
@@ -3029,6 +3039,30 @@ def _show_clone_bot_menu(chat_id):
     kb = CLONE_BOT_MENU_KEYBOARD_ACTIVE if is_running else CLONE_BOT_MENU_KEYBOARD_INACTIVE
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
+def _show_clone_main_menu(chat_id):
+    """Show the top-level Clone Bot menu with two feature inline buttons."""
+    with _clone_bots_lock:
+        count = len(_clone_bots_list)
+    active_bots = sum(1 for b in _clone_bots_list if b.get('thread') and b['thread'].is_alive())
+
+    token_ok   = bool(CLONE_BOT_TOKEN)
+    is_running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
+
+    clone_status = f"🟢 {active_bots}/{count}" if active_bots else (f"🔴 {count} Bot" if count else "🔴 គ្មាន")
+    voice_status = "🟢 ដំណើរការ" if is_running else ("🔑 មិនទាន់​កំណត់" if not token_ok else "🔴 បញ្ឈប់")
+
+    msg = (
+        "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
+        "ជ្រើសរើសមុខងារដែលចង់ប្រើ:\n\n"
+        f"  🤖 <b>Clone Bot</b> — {clone_status}\n"
+        f"  🎙 <b>បង្កើតសំឡេង Ai</b> — {voice_status}"
+    )
+    kb = {'inline_keyboard': [
+        [{'text': f"🤖 Clone Bot  ({clone_status})", 'callback_data': 'clone_feat_bots'}],
+        [{'text': f"🎙 បង្កើតសំឡេង Ai  ({voice_status})", 'callback_data': 'clone_feat_voice'}],
+    ]}
+    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
+
 # ── Main message handler ──────────────────────────────────────────────────────
 def handle_message(update):
     global MAINTENANCE_MODE, PAYMENT_NAME, CHANNEL_ID, CLONE_BOT_TOKEN
@@ -3295,7 +3329,7 @@ def handle_message(update):
                 _show_clone_bot_menu(chat_id)
                 return
             if btn == BTN_CLONE_MENU:
-                _show_clone_bots_list(chat_id)
+                _show_clone_main_menu(chat_id)
                 return
             if btn == BTN_TRANSLATE:
                 _show_translate_menu(chat_id, user_id)
