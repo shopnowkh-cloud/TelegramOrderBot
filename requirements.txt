@@ -1,7 +1,3 @@
-pyrogram==2.0.106
-tgcrypto==1.2.5
-pyaes==1.6.1
-PySocks==1.7.1
 requests==2.34.2
 bakong-khqr[image]==0.5.8
 qrcode[pil]==8.2
@@ -9,14 +5,4 @@ Pillow==12.2.0
 edge-tts
 imageio-ffmpeg
 deep-translator
-bakong-khqr
-deep-translator
-edge-tts
-imageio-ffmpeg
-pillow
-pyaes
-pyrogram
-PySocks
-qrcode
-requests
-tgcrypto
+langdetect>=1.0.9
