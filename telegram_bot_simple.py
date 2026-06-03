@@ -2961,6 +2961,12 @@ def _clone_bot_polling_loop(token):
     base_url = f"https://api.telegram.org/bot{token}/"
     offset   = None
     logger.info("Clone Bot polling started")
+    # Delete any active webhook before polling
+    try:
+        http.post(f"{base_url}deleteWebhook", json={'drop_pending_updates': False}, timeout=10)
+        logger.info("Clone Bot: webhook deleted, starting poll")
+    except Exception as e:
+        logger.warning(f"Clone Bot deleteWebhook failed: {e}")
     while CLONE_BOT_ACTIVE:
         try:
             params = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
