@@ -1261,6 +1261,38 @@ BTN_CLONE_START       = '▶️ ចាប់ផ្តើម Clone Bot'
 BTN_CLONE_STOP        = '⏹ បញ្ឈប់ Clone Bot'
 BTN_CLONE_SET_TOKEN   = '🔑 កំណត់ Token'
 BTN_CLONE_TOKEN_CLEAR = '🗑 លុប Token'
+BTN_TRANSLATE         = '🌐 បកប្រែភាសា'
+
+TRANSLATE_LANGUAGES = {
+    "km": "🇰🇭 ខ្មែរ",
+    "en": "🇺🇸 អង់គ្លេស",
+    "zh-CN": "🇨🇳 ចិន",
+    "ja": "🇯🇵 ជប៉ុន",
+    "ko": "🇰🇷 កូរ៉េ",
+    "fr": "🇫🇷 បារាំង",
+    "th": "🇹🇭 ថៃ",
+    "vi": "🇻🇳 វៀតណាម",
+    "de": "🇩🇪 អាល្លឺម៉ង់",
+    "es": "🇪🇸 អេស្ប៉ាញ",
+    "ru": "🇷🇺 រុស្សី",
+    "ar": "🇸🇦 អារ៉ាប់",
+    "pt": "🇵🇹 ព័រទុយហ្គាល់",
+    "it": "🇮🇹 អ៊ីតាលី",
+    "hi": "🇮🇳 ហិណ្ឌូ",
+    "id": "🇮🇩 អ៊ីនដូនេស៊ី",
+    "ms": "🇲🇾 ម៉ាឡេស៊ី",
+    "tl": "🇵🇭 ហ្វីលីពីន",
+    "tr": "🇹🇷 តួគី",
+    "nl": "🇳🇱 ហូឡង់",
+    "pl": "🇵🇱 ប៉ូឡូញ",
+    "uk": "🇺🇦 អ៊ុយក្រែន",
+    "sv": "🇸🇪 ស៊ុយអែត",
+    "da": "🇩🇰 ដាណឺម៉ាក",
+    "fi": "🇫🇮 ហ្វាំងឡង់",
+    "my": "🇲🇲 មីយ៉ាន់ម៉ា",
+    "lo": "🇱🇦 ឡាវ",
+    "mn": "🇲🇳 ម៉ុងហ្គោល",
+}
 
 BROADCAST_CONFIRM_KEYBOARD = {
     'keyboard': [
@@ -1277,6 +1309,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
         [{'text': BTN_MAINTENANCE}, {'text': BTN_CLONE_BOT, 'icon_custom_emoji_id': '6125301608151523076'}],
+        [{'text': BTN_TRANSLATE}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -1316,6 +1349,10 @@ CLONE_BOT_MENU_KEYBOARD_INACTIVE = {
         [{'text': BTN_BACK_SETTINGS}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
+TRANSLATE_SUBMENU_KEYBOARD = {
+    'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
+}
 CANCEL_INPUT_KEYBOARD = {
     'keyboard': [[{'text': BTN_CANCEL_INPUT}]],
     'resize_keyboard': True, 'one_time_keyboard': False, 'is_persistent': True
@@ -1354,7 +1391,38 @@ ADMIN_BUTTON_LABELS = {
     BTN_MAINT_ON, BTN_MAINT_OFF,
     BTN_CLONE_BOT, BTN_CLONE_START, BTN_CLONE_STOP,
     BTN_CLONE_SET_TOKEN, BTN_CLONE_TOKEN_CLEAR,
+    BTN_TRANSLATE,
 }
+
+# ── Translation helpers ───────────────────────────────────────────────────────
+def _get_translate_lang_keyboard():
+    rows = []
+    items = list(TRANSLATE_LANGUAGES.items())
+    for i in range(0, len(items), 3):
+        row = [{'text': name, 'callback_data': f'lang_{code}'}
+               for code, name in items[i:i+3]]
+        rows.append(row)
+    return {'inline_keyboard': rows}
+
+def _show_translate_menu(chat_id, user_id):
+    with _data_lock:
+        user_sessions[user_id] = {'state': 'translate_mode', 'lang_code': 'en', 'lang_name': '🇺🇸 អង់គ្លេស'}
+    save_sessions_async()
+    send_message(
+        chat_id,
+        "🌐 <b>បកប្រែភាសា</b>\n\nសូមជ្រើសរើសភាសាដែលចង់បកប្រែទៅ៖",
+        parse_mode="HTML",
+        reply_to_message_id=False,
+        reply_markup=_get_translate_lang_keyboard()
+    )
+
+def _translate_text(text, target_lang):
+    try:
+        from deep_translator import GoogleTranslator
+        return GoogleTranslator(source='auto', target=target_lang).translate(text)
+    except Exception as e:
+        logger.error(f"Translation error: {e}")
+        return None
 
 # ── Admin menu helpers ────────────────────────────────────────────────────────
 def send_admin_settings_menu(chat_id):
@@ -2095,6 +2163,25 @@ def handle_callback_query(update):
             delete_message_async(chat_id, callback_query['message']['message_id'])
             send_message(chat_id, "🚫 <b>បានបោះបង់ការលុបប្រភេទ Account</b>",
                          parse_mode="HTML", reply_to_message_id=None)
+            return
+
+        elif callback_data.startswith('lang_') and is_admin(user_id):
+            lang_code = callback_data[5:]
+            lang_name = TRANSLATE_LANGUAGES.get(lang_code, lang_code)
+            answer_callback(callback_query['id'], f"✅ {lang_name}")
+            with _data_lock:
+                user_sessions[user_id] = {'state': 'translate_mode', 'lang_code': lang_code, 'lang_name': lang_name}
+            save_sessions_async()
+            delete_message_async(chat_id, callback_query['message']['message_id'])
+            send_message(
+                chat_id,
+                f"✅ <b>ភាសាបកប្រែ៖ {lang_name}</b>\n\n"
+                f"💬 សូមផ្ញើអក្សរដែលចង់បកប្រែ។\n"
+                f"↩️ ចុច <b>ត្រឡប់ទៅកំណត់</b> ដើម្បីចេញ។",
+                parse_mode="HTML",
+                reply_to_message_id=False,
+                reply_markup=TRANSLATE_SUBMENU_KEYBOARD
+            )
             return
 
         elif callback_data.startswith('adm:') and is_admin(user_id):
@@ -2867,12 +2954,36 @@ def handle_message(update):
                              parse_mode="HTML", reply_to_message_id=False,
                              reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
                 return
+            if btn == BTN_TRANSLATE:
+                _show_translate_menu(chat_id, user_id)
+                return
 
         if user_id in user_sessions:
             session = user_sessions[user_id]
 
             if session.get('state') == 'payment_pending':
                 _remind_pending_payment(chat_id, session)
+                return
+
+            if session.get('state') == 'translate_mode' and is_admin(user_id):
+                lang_code = session.get('lang_code', 'en')
+                lang_name = session.get('lang_name', lang_code)
+                if not text or not text.strip():
+                    send_message(chat_id, "💬 សូម​ផ្ញើ​អក្សរ​ដែល​ចង់​បកប្រែ។",
+                                 reply_to_message_id=False, reply_markup=TRANSLATE_SUBMENU_KEYBOARD)
+                    return
+                translated = _translate_text(text.strip(), lang_code)
+                if translated:
+                    send_message(
+                        chat_id,
+                        f"🌐 <b>{lang_name}</b>\n\n<blockquote>{html.escape(translated)}</blockquote>",
+                        parse_mode="HTML",
+                        reply_to_message_id=False,
+                        reply_markup=TRANSLATE_SUBMENU_KEYBOARD
+                    )
+                else:
+                    send_message(chat_id, "❌ មានបញ្ហាក្នុងការបកប្រែ សូម​ព្យាយាម​ម្តងទៀត។",
+                                 reply_to_message_id=False, reply_markup=TRANSLATE_SUBMENU_KEYBOARD)
                 return
 
             if session['state'] == 'waiting_for_quantity':
