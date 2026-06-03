@@ -37,3 +37,17 @@ qrcode
 requests
 tabulate
 tgcrypto
+bakong-khqr
+beautifulsoup4
+deep-translator
+edge-tts
+imageio-ffmpeg
+langdetect
+pillow
+pyaes
+pyrogram
+PySocks
+qrcode
+requests
+tabulate
+tgcrypto
