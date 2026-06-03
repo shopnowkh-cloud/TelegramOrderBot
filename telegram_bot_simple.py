@@ -75,6 +75,7 @@ TRANSLATE_BOT_TOKEN  = ""
 TRANSLATE_BOT_ACTIVE = False
 _translate_bot_thread = None
 _translate_bot_prefs: dict = {}   # {user_id: {lang_code, lang_name}}
+_admin_settings_msg: dict = {}   # {user_id: message_id} — settings panel to edit in place
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
@@ -1320,82 +1321,84 @@ BROADCAST_CONFIRM_KEYBOARD = {
     'is_persistent': True
 }
 
-ADMIN_SETTINGS_REPLY_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_ADD_ACCOUNT}, {'text': BTN_DELETE_TYPE}],
-        [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
-        [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
-        [{'text': BTN_MAINTENANCE}],
-        [{'text': '🤖 Clone Bot'}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
-}
+# ── Settings panel — ALL inline (editMessageText navigation) ─────────────────
+ADMIN_SETTINGS_REPLY_KEYBOARD = {'remove_keyboard': True}   # keep name for compat
 
-PAYMENT_SUBMENU_KEYBOARD = {
-    'keyboard': [[{'text': BTN_PAYMENT_EDIT}], [{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
-BAKONG_SUBMENU_KEYBOARD = {
-    'keyboard': [[{'text': BTN_BAKONG_EDIT}], [{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
-CHANNEL_SUBMENU_KEYBOARD = {
-    'keyboard': [[{'text': BTN_CHANNEL_EDIT}, {'text': BTN_CHANNEL_CLEAR}], [{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
-ADMINS_SUBMENU_KEYBOARD = {
-    'keyboard': [[{'text': BTN_ADMIN_ADD}, {'text': BTN_ADMIN_REMOVE}], [{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
-MAINTENANCE_SUBMENU_KEYBOARD = {
-    'keyboard': [[{'text': BTN_MAINT_ON}, {'text': BTN_MAINT_OFF}], [{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
-CLONE_BOT_MENU_KEYBOARD_ACTIVE = {
-    'keyboard': [
-        [{'text': BTN_CLONE_STOP}],
-        [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
-        [{'text': BTN_TRANSLATE}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ], 'resize_keyboard': True, 'is_persistent': True
-}
-CLONE_BOT_MENU_KEYBOARD_INACTIVE = {
-    'keyboard': [
-        [{'text': BTN_CLONE_START}],
-        [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
-        [{'text': BTN_TRANSLATE}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ], 'resize_keyboard': True, 'is_persistent': True
-}
-TRANSLATE_BOT_MENU_KB_ACTIVE = {
-    'keyboard': [
-        [{'text': BTN_TR_STOP}],
-        [{'text': BTN_TR_SET_TOKEN}, {'text': BTN_TR_TOKEN_CLEAR}],
-        [{'text': BTN_CLONE_BOT}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ], 'resize_keyboard': True, 'is_persistent': True
-}
-TRANSLATE_BOT_MENU_KB_INACTIVE = {
-    'keyboard': [
-        [{'text': BTN_TR_START}],
-        [{'text': BTN_TR_SET_TOKEN}, {'text': BTN_TR_TOKEN_CLEAR}],
-        [{'text': BTN_CLONE_BOT}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ], 'resize_keyboard': True, 'is_persistent': True
-}
-TRANSLATE_SUBMENU_KEYBOARD = {
-    'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
-CLONE_MAIN_KB = {
-    'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
-CANCEL_INPUT_KEYBOARD = {
-    'keyboard': [[{'text': BTN_CANCEL_INPUT}]],
-    'resize_keyboard': True, 'one_time_keyboard': False, 'is_persistent': True
-}
+SETTINGS_MAIN_IKB = {'inline_keyboard': [
+    [{'text': '➕ បន្ថែម Account',  'callback_data': 's:add_acc'},
+     {'text': '🗑 លុបប្រភេទ',      'callback_data': 's:del_type'}],
+    [{'text': '📋 របាយការណ៍ទិញ',  'callback_data': 's:buyers'},
+     {'text': '💳 ឈ្មោះ Payment',  'callback_data': 's:pay'}],
+    [{'text': '🔑 Bakong Token',    'callback_data': 's:bak'},
+     {'text': '📢 Channel ID',      'callback_data': 's:ch'}],
+    [{'text': '👑 Admin',           'callback_data': 's:adm'},
+     {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
+    [{'text': '🎙 TTS Bot',         'callback_data': 's:tts'},
+     {'text': '🌐 Translate Bot',   'callback_data': 's:tr'}],
+]}
+SETTINGS_PAY_IKB = {'inline_keyboard': [
+    [{'text': '✏️ ប្តូរឈ្មោះ Payment', 'callback_data': 's:pay_edit'}],
+    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+]}
+SETTINGS_BAK_IKB = {'inline_keyboard': [
+    [{'text': '✏️ ប្តូរ Bakong Token', 'callback_data': 's:bak_edit'}],
+    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+]}
+SETTINGS_CH_IKB = {'inline_keyboard': [
+    [{'text': '✏️ ប្តូរ Channel ID',   'callback_data': 's:ch_edit'},
+     {'text': '🗑 លុប Channel ID',     'callback_data': 's:ch_clear'}],
+    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+]}
+SETTINGS_ADM_IKB = {'inline_keyboard': [
+    [{'text': '➕ បន្ថែម Admin',       'callback_data': 's:adm_add'},
+     {'text': '➖ ដក Admin',           'callback_data': 's:adm_rm'}],
+    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+]}
+SETTINGS_CANCEL_IKB = {'inline_keyboard': [
+    [{'text': '🚫 បោះបង់',            'callback_data': 's:cancel_input'}],
+]}
+# Dynamic builders (state-dependent)
+def _build_settings_maint_ikb():
+    btn = BTN_MAINT_OFF if MAINTENANCE_MODE else BTN_MAINT_ON
+    cb  = 's:mnt_off'  if MAINTENANCE_MODE else 's:mnt_on'
+    return {'inline_keyboard': [
+        [{'text': btn, 'callback_data': cb}],
+        [{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}],
+    ]}
+def _build_settings_tts_ikb():
+    running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
+    return {'inline_keyboard': [
+        [{'text': BTN_CLONE_STOP if running else BTN_CLONE_START,
+          'callback_data': 's:tts_stop' if running else 's:tts_start'}],
+        [{'text': BTN_CLONE_SET_TOKEN, 'callback_data': 's:tts_token'},
+         {'text': BTN_CLONE_TOKEN_CLEAR, 'callback_data': 's:tts_clear'}],
+        [{'text': '🌐 Translate Bot',  'callback_data': 's:tr'},
+         {'text': '↩️ ត្រឡប់',        'callback_data': 's:main'}],
+    ]}
+def _build_settings_tr_ikb():
+    running = TRANSLATE_BOT_ACTIVE and _translate_bot_thread and _translate_bot_thread.is_alive()
+    return {'inline_keyboard': [
+        [{'text': BTN_TR_STOP if running else BTN_TR_START,
+          'callback_data': 's:tr_stop' if running else 's:tr_start'}],
+        [{'text': BTN_TR_SET_TOKEN,  'callback_data': 's:tr_token'},
+         {'text': BTN_TR_TOKEN_CLEAR,'callback_data': 's:tr_clear'}],
+        [{'text': '🎙 TTS Bot',       'callback_data': 's:tts'},
+         {'text': '↩️ ត្រឡប់',       'callback_data': 's:main'}],
+    ]}
+
+# Legacy compat aliases (some internal callers reference these names)
+PAYMENT_SUBMENU_KEYBOARD    = SETTINGS_PAY_IKB
+BAKONG_SUBMENU_KEYBOARD     = SETTINGS_BAK_IKB
+CHANNEL_SUBMENU_KEYBOARD    = SETTINGS_CH_IKB
+ADMINS_SUBMENU_KEYBOARD     = SETTINGS_ADM_IKB
+MAINTENANCE_SUBMENU_KEYBOARD = None  # replaced by _build_settings_maint_ikb()
+CLONE_BOT_MENU_KEYBOARD_ACTIVE   = None  # replaced by _build_settings_tts_ikb()
+CLONE_BOT_MENU_KEYBOARD_INACTIVE = None  # replaced by _build_settings_tts_ikb()
+TRANSLATE_BOT_MENU_KB_ACTIVE     = None  # replaced by _build_settings_tr_ikb()
+TRANSLATE_BOT_MENU_KB_INACTIVE   = None  # replaced by _build_settings_tr_ikb()
+TRANSLATE_SUBMENU_KEYBOARD = {'remove_keyboard': True}
+CLONE_MAIN_KB              = {'remove_keyboard': True}
+CANCEL_INPUT_KEYBOARD      = SETTINGS_CANCEL_IKB
 ADD_ACCOUNT_KEYBOARD = {
     'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
     'resize_keyboard': True, 'is_persistent': True
@@ -1463,27 +1466,54 @@ def _translate_text(text, target_lang):
         logger.error(f"Translation error: {e}")
         return None
 
-# ── Admin menu helpers ────────────────────────────────────────────────────────
-def send_admin_settings_menu(chat_id):
-    send_message(
-        chat_id,
-        "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖",
-        parse_mode="HTML",
-        reply_to_message_id=False,
-        reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
-    )
+# ── Admin settings panel helpers ──────────────────────────────────────────────
+def _settings_edit(chat_id, user_id, text, ikb):
+    """Edit the stored settings-panel message in place; fall back to new send."""
+    msg_id = _admin_settings_msg.get(user_id)
+    if msg_id:
+        result = _tg_api('editMessageText', chat_id=chat_id, message_id=msg_id,
+                         text=text, parse_mode='HTML', reply_markup=ikb)
+        if result:
+            return result
+    # Fallback: send new and store id
+    r = send_message(chat_id, text, parse_mode='HTML',
+                     reply_to_message_id=False, reply_markup=ikb)
+    if r and isinstance(r, dict):
+        _admin_settings_msg[user_id] = r.get('message_id')
+    return r
 
-def _prompt_admin_input(chat_id, user_id, key, prompt_text):
+def _settings_main_text():
+    return "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការ៖"
+
+def send_admin_settings_menu(chat_id, user_id=None):
+    """Send (or re-send) the settings panel as a fresh message and store its id."""
+    if user_id is None:
+        user_id = chat_id
+    r = send_message(chat_id, _settings_main_text(), parse_mode='HTML',
+                     reply_to_message_id=False, reply_markup=SETTINGS_MAIN_IKB)
+    if r and isinstance(r, dict):
+        _admin_settings_msg[user_id] = r.get('message_id')
+
+def _prompt_admin_input(chat_id, user_id, key, prompt_text, return_menu='main'):
+    """Send a separate prompt message; cancel returns to return_menu sub-panel."""
     with _data_lock:
-        user_sessions[user_id] = {'state': f'admin_input:{key}'}
+        user_sessions[user_id] = {
+            'state': f'admin_input:{key}',
+            'settings_return': return_menu,
+        }
     save_sessions_async()
-    send_message(
+    r = send_message(
         chat_id,
         prompt_text + "\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
         parse_mode="HTML",
         reply_to_message_id=False,
-        reply_markup=CANCEL_INPUT_KEYBOARD
+        reply_markup=SETTINGS_CANCEL_IKB,
     )
+    if r and isinstance(r, dict):
+        # store the prompt msg_id so we can delete it after input
+        with _data_lock:
+            if user_id in user_sessions:
+                user_sessions[user_id]['prompt_msg_id'] = r.get('message_id')
 
 def _show_users_list_inline(chat_id):
     try:
@@ -1499,10 +1529,9 @@ def _show_users_list_inline(chat_id):
     except Exception as e:
         logger.error(f"Failed to load known users: {e}")
         rows = []
-    back_keyboard = {'keyboard': [[{'text': BTN_BACK_SETTINGS}]], 'resize_keyboard': True, 'is_persistent': True}
     if not rows:
-        send_message(chat_id, "📭 <b>មិនទាន់មានអ្នកប្រើប្រាស់ទេ។</b>",
-                     parse_mode="HTML", reply_to_message_id=False, reply_markup=back_keyboard)
+        send_message(chat_id, "\U0001f4ed <b>\u1798\u17b7\u1793\u178f\u17b6\u1793\u1798\u17b6\u1793\u17a2\u17d2នក\u1794្រ\u17be\u179f\u1794្រ\u17be</b>",
+                     parse_mode="HTML", reply_to_message_id=False)
         return
     total = len(rows)
     lines = [f"👥 អ្នកប្រើប្រាស់សរុប: {total}", ""]
@@ -1520,13 +1549,10 @@ def _show_users_list_inline(chat_id):
     txt      = "\n".join(lines).encode('utf-8')
     import datetime as _dt
     filename = f"users_{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
-    result   = _send_document_bytes(chat_id, txt, filename, caption=f"👥 បញ្ជីអ្នកប្រើប្រាស់ — {total} នាក់")
+    result   = _send_document_bytes(chat_id, txt, filename, caption=f"\U0001f465 \u1794\u1789\u17d2\u1787\u17b8\u17a2\u17d2\u1793\u1780\u1794្រ\u17be\u179f\u1794្រ\u17be \u2014 {total} \u1793\u17b6\u1780")
     if not result:
-        send_message(chat_id, "❌ បរាជ័យក្នុងការផ្ញើ​ឯកសារ",
-                     reply_to_message_id=False, reply_markup=back_keyboard)
-        return
-    send_message(chat_id, "↩️ ជ្រើសរើសខាងក្រោម៖",
-                 reply_to_message_id=False, reply_markup=back_keyboard)
+        send_message(chat_id, "\u274c \u1794រ\u17b6\u1787\u1799\u178f្រ\u1780\u17d2ន\u1780ារផ្ញើស\u200bអ\u178f្ថ\u200bហ\u17bdរ",
+                     reply_to_message_id=False)
 
 def _show_delete_type_menu_inline(chat_id, user_id=None):
     types = [
@@ -1630,38 +1656,38 @@ def _export_buyers_report_inline(chat_id):
         send_message(chat_id, f"❌ Error: <code>{html.escape(str(e))}</code>",
                      parse_mode="HTML", reply_to_message_id=False)
 
-def _show_admins_inline(chat_id):
+def _show_admins_inline(chat_id, user_id=None):
+    uid    = user_id or chat_id
     extras = sorted(EXTRA_ADMIN_IDS)
     extras_str = "\n".join(f"• <code>{x}</code>" for x in extras) if extras else "(គ្មាន)"
     text_msg = (
         f"👑 <b>Admin បឋម៖</b> <code>{ADMIN_ID}</code>\n\n"
         f"➕ <b>Admin បន្ថែម៖</b>\n{extras_str}"
     )
-    send_message(chat_id, text_msg, parse_mode="HTML",
-                 reply_to_message_id=False, reply_markup=ADMINS_SUBMENU_KEYBOARD)
+    _settings_edit(chat_id, uid, text_msg, SETTINGS_ADM_IKB)
 
-def _show_channel_inline(chat_id):
-    current  = CHANNEL_ID if CHANNEL_ID else "(មិនទាន់កំណត់)"
+def _show_channel_inline(chat_id, user_id=None):
+    uid     = user_id or chat_id
+    current = CHANNEL_ID if CHANNEL_ID else "(មិនទាន់កំណត់)"
     text_msg = f"📢 <b>Channel ID បច្ចុប្បន្ន៖</b>\n<code>{html.escape(str(current))}</code>"
-    send_message(chat_id, text_msg, parse_mode="HTML",
-                 reply_to_message_id=False, reply_markup=CHANNEL_SUBMENU_KEYBOARD)
+    _settings_edit(chat_id, uid, text_msg, SETTINGS_CH_IKB)
 
-def _show_payment_inline(chat_id):
+def _show_payment_inline(chat_id, user_id=None):
+    uid      = user_id or chat_id
     text_msg = f"💳 <b>ឈ្មោះ Payment បច្ចុប្បន្ន៖</b>\n<code>{html.escape(PAYMENT_NAME or '(មិនទាន់កំណត់)')}</code>"
-    send_message(chat_id, text_msg, parse_mode="HTML",
-                 reply_to_message_id=False, reply_markup=PAYMENT_SUBMENU_KEYBOARD)
+    _settings_edit(chat_id, uid, text_msg, SETTINGS_PAY_IKB)
 
-def _show_bakong_inline(chat_id):
-    full     = BAKONG_TOKEN if BAKONG_TOKEN else "(មិនទាន់កំណត់)"
+def _show_bakong_inline(chat_id, user_id=None):
+    uid  = user_id or chat_id
+    full = BAKONG_TOKEN if BAKONG_TOKEN else "(មិនទាន់កំណត់)"
     text_msg = f"🔑 <b>Bakong Token បច្ចុប្បន្ន៖</b>\n<code>{html.escape(full)}</code>"
-    send_message(chat_id, text_msg, parse_mode="HTML",
-                 reply_to_message_id=False, reply_markup=BAKONG_SUBMENU_KEYBOARD)
+    _settings_edit(chat_id, uid, text_msg, SETTINGS_BAK_IKB)
 
-def _show_maintenance_inline(chat_id):
+def _show_maintenance_inline(chat_id, user_id=None):
+    uid      = user_id or chat_id
     status   = "🔴 បិទ" if MAINTENANCE_MODE else "🟢 បើក"
     text_msg = f"🛠 <b>ស្ថានភាព Bot បច្ចុប្បន្ន៖</b> {status}"
-    send_message(chat_id, text_msg, parse_mode="HTML",
-                 reply_to_message_id=False, reply_markup=MAINTENANCE_SUBMENU_KEYBOARD)
+    _settings_edit(chat_id, uid, text_msg, _build_settings_maint_ikb())
 
 def _start_add_account_flow(chat_id, user_id, message_id):
     with _data_lock:
@@ -1679,22 +1705,27 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
     global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN
 
     raw          = (text or '').strip()
-    cancel_words = {'បោះបង់', '🚫 បោះបង់'}
-    if raw in cancel_words:
+    sess         = user_sessions.get(user_id, {})
+    return_menu  = sess.get('settings_return', 'main')
+    prompt_msg   = sess.get('prompt_msg_id')
+
+    def _finish_input(goto='main'):
+        """Delete the prompt message and navigate settings panel."""
+        if prompt_msg:
+            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(chat_id, "🚫 បានបោះបង់ការកំណត់",
-                     reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+        _dispatch_settings_panel(chat_id, user_id, goto)
+
+    cancel_words = {'បោះបង់', '🚫 បោះបង់'}
+    if raw in cancel_words:
+        _finish_input(return_menu)
         return True
 
     if raw == BTN_BACK_SETTINGS:
-        with _data_lock:
-            if user_id in user_sessions:
-                del user_sessions[user_id]
-        save_sessions_async()
-        send_admin_settings_menu(chat_id)
+        _finish_input('main')
         return True
 
     if key == 'payment':
@@ -1703,12 +1734,13 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             return True
         PAYMENT_NAME = raw
         set_setting('PAYMENT_NAME', PAYMENT_NAME)
+        if prompt_msg:
+            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(chat_id, f"✅ បានប្តូរឈ្មោះ Payment ទៅជា <b>{html.escape(PAYMENT_NAME)}</b>",
-                     parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+        _show_payment_inline(chat_id, user_id)
         return True
 
     if key == 'bakong':
@@ -1725,15 +1757,13 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         khqr_client  = new_client
         set_setting('BAKONG_TOKEN', raw)
         delete_message_async(chat_id, message_id)
+        if prompt_msg and prompt_msg != message_id:
+            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(
-            chat_id,
-            f"✅ បានប្តូរ Bakong token (Prefix៖ <code>{html.escape(raw[:10])}…</code>)",
-            parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
-        )
+        _show_bakong_inline(chat_id, user_id)
         return True
 
     if key == 'channel':
@@ -1745,25 +1775,23 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         if raw.lower() in ('off', 'none', 'clear', 'delete', 'remove'):
             CHANNEL_ID = ""
             set_setting('TELEGRAM_CHANNEL_ID', '')
+            if prompt_msg:
+                delete_message_async(chat_id, prompt_msg)
             with _data_lock:
                 if user_id in user_sessions:
                     del user_sessions[user_id]
             save_sessions_async()
-            send_message(chat_id, "✅ បានលុប Channel ID",
-                         reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+            _show_channel_inline(chat_id, user_id)
             return True
         CHANNEL_ID = raw
         set_setting('TELEGRAM_CHANNEL_ID', raw)
+        if prompt_msg:
+            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(
-            chat_id,
-            f"✅ បានកំណត់ Channel ID ទៅជា <code>{html.escape(raw)}</code>\n"
-            f"សូមប្រាកដថា bot ជា admin/member ក្នុង channel នោះ។",
-            parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
-        )
+        _show_channel_inline(chat_id, user_id)
         return True
 
     if key in ('admin_add', 'admin_remove'):
@@ -1774,31 +1802,26 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             send_message(chat_id, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
             return True
         if target_id == ADMIN_ID:
-            send_message(chat_id, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។",
-                         reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-            with _data_lock:
-                if user_id in user_sessions:
-                    del user_sessions[user_id]
-            save_sessions_async()
+            send_message(chat_id, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។", reply_to_message_id=False)
+            _finish_input('adm')
             return True
         if action == 'add':
             EXTRA_ADMIN_IDS.add(target_id)
-            msg = f"✅ បានបន្ថែម <code>{target_id}</code> ជា admin"
         else:
             EXTRA_ADMIN_IDS.discard(target_id)
-            msg = f"✅ បានដក <code>{target_id}</code> ចេញពី admin"
         set_setting('EXTRA_ADMIN_IDS', json.dumps(sorted(EXTRA_ADMIN_IDS)))
+        if prompt_msg:
+            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(chat_id, msg, parse_mode="HTML",
-                     reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+        _show_admins_inline(chat_id, user_id)
         return True
 
     if key == 'clone_token':
         if not raw:
-            send_message(chat_id, "សូម​ផ្ញើ Token របស់ Clone Bot (ឬ​ចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            send_message(chat_id, "សូម​ផ្ញើ Token របស់ TTS Bot (ឬ​ចុច 🚫 បោះបង់)", reply_to_message_id=False)
             return True
         try:
             test_resp = http.get(f"https://api.telegram.org/bot{raw}/getMe", timeout=10).json()
@@ -1807,8 +1830,8 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                     f"❌ Token មិន​ត្រឹម​ត្រូវ: {test_resp.get('description', 'Unknown error')}",
                     reply_to_message_id=False)
                 return True
-            bot_info = test_resp.get('result', {})
-            bot_name = bot_info.get('first_name', 'Bot')
+            bot_info     = test_resp.get('result', {})
+            bot_name     = bot_info.get('first_name', 'Bot')
             bot_username = bot_info.get('username', '')
         except Exception as e:
             send_message(chat_id, f"❌ មិន​អាច​ភ្ជាប់ Telegram: {e}", reply_to_message_id=False)
@@ -1816,18 +1839,13 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         CLONE_BOT_TOKEN = raw
         set_setting('CLONE_BOT_TOKEN', raw)
         delete_message_async(chat_id, message_id)
+        if prompt_msg and prompt_msg != message_id:
+            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(
-            chat_id,
-            f"✅ <b>ស្ថាបនា TTS Bot ជោគជ័យ!</b>\n\n"
-            f"🤖 Bot: <b>{html.escape(bot_name)}</b> (@{html.escape(bot_username)})\n\n"
-            f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក TTS Bot</i>",
-            parse_mode="HTML", reply_to_message_id=False,
-            reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE
-        )
+        _show_clone_bot_menu(chat_id, user_id)
         return True
 
     if key == 'translate_token':
@@ -1841,8 +1859,8 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                     f"❌ Token មិន​ត្រឹម​ត្រូវ: {test_resp.get('description', 'Unknown error')}",
                     reply_to_message_id=False)
                 return True
-            bot_info = test_resp.get('result', {})
-            bot_name = bot_info.get('first_name', 'Bot')
+            bot_info     = test_resp.get('result', {})
+            bot_name     = bot_info.get('first_name', 'Bot')
             bot_username = bot_info.get('username', '')
         except Exception as e:
             send_message(chat_id, f"❌ មិន​អាច​ភ្ជាប់ Telegram: {e}", reply_to_message_id=False)
@@ -1850,18 +1868,13 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         TRANSLATE_BOT_TOKEN = raw
         set_setting('TRANSLATE_BOT_TOKEN', raw)
         delete_message_async(chat_id, message_id)
+        if prompt_msg and prompt_msg != message_id:
+            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(
-            chat_id,
-            f"✅ <b>ស្ថាបនា Translate Bot ជោគជ័យ!</b>\n\n"
-            f"🌐 Bot: <b>{html.escape(bot_name)}</b> (@{html.escape(bot_username)})\n\n"
-            f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក Translate Bot</i>",
-            parse_mode="HTML", reply_to_message_id=False,
-            reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE
-        )
+        _show_translate_bot_menu(chat_id, user_id)
         return True
 
     if key == 'broadcast':
@@ -2092,6 +2105,7 @@ def deliver_accounts(chat_id, user_id, session, payment_data=None, user_name='')
 
 # ── Callback query handler ────────────────────────────────────────────────────
 def handle_callback_query(update):
+    global CHANNEL_ID, MAINTENANCE_MODE, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN, TRANSLATE_BOT_ACTIVE
     _set_reply_to_id(None)
     try:
         callback_query = update.get('callback_query')
@@ -2351,6 +2365,144 @@ def handle_callback_query(update):
                 delete_message_async(chat_id, menu_msg_id)
                 send_message(chat_id, "✅ <b>Maintenance mode OFF</b> — Bot ដំណើរការធម្មតាហើយ",
                              parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
+                return
+            return
+
+        elif callback_data.startswith('s:') and is_admin(user_id):
+            action = callback_data[2:]
+            answer_callback(callback_query['id'])
+            if action == 'cancel_input':
+                # Delete the prompt msg and go back to last sub-menu
+                sess = user_sessions.get(user_id, {})
+                return_key = sess.get('settings_return', 'main')
+                prompt_mid = sess.get('prompt_msg_id')
+                if prompt_mid:
+                    delete_message_async(chat_id, prompt_mid)
+                with _data_lock:
+                    if user_id in user_sessions:
+                        del user_sessions[user_id]
+                save_sessions_async()
+                _dispatch_settings_panel(chat_id, user_id, return_key)
+                return
+            if action == 'main':
+                _settings_edit(chat_id, user_id, _settings_main_text(), SETTINGS_MAIN_IKB)
+                return
+            if action == 'pay':
+                _show_payment_inline(chat_id, user_id)
+                return
+            if action == 'pay_edit':
+                _prompt_admin_input(chat_id, user_id, 'payment',
+                    "💳 ស្អមផ្ញើស​ <b>អត្ថកំនួយ Payment</b>​ ថ្មី (1–60 តួអក្សរ)ខ្មែរ:", 'pay')
+                return
+            if action == 'bak':
+                _show_bakong_inline(chat_id, user_id)
+                return
+            if action == 'bak_edit':
+                _prompt_admin_input(chat_id, user_id, 'bakong',
+                    "🔑 ស្អមផ្ញើស​ <b>Bakong Token</b>​ ថ្មី:", 'bak')
+                return
+            if action == 'ch':
+                _show_channel_inline(chat_id, user_id)
+                return
+            if action == 'ch_edit':
+                _prompt_admin_input(chat_id, user_id, 'channel',
+                    "📢 ស្អមផ្ញើស <b>Channel ID</b>​ ថ្មី (ហណ. <code>-1001234567890</code>):", 'ch')
+                return
+            if action == 'ch_clear':
+                CHANNEL_ID = ""
+                set_setting('TELEGRAM_CHANNEL_ID', '')
+                _show_channel_inline(chat_id, user_id)
+                return
+            if action == 'adm':
+                _show_admins_inline(chat_id, user_id)
+                return
+            if action == 'adm_add':
+                _prompt_admin_input(chat_id, user_id, 'admin_add',
+                    "➕ ស្អមផ្ញើស <b>Telegram User ID</b>​ ដែលចង់បន្តើមជា Admin:", 'adm')
+                return
+            if action == 'adm_rm':
+                _prompt_admin_input(chat_id, user_id, 'admin_remove',
+                    "➖ ស្អមផ្ញើស <b>Telegram User ID</b>​ ដែលចង់ដក:", 'adm')
+                return
+            if action == 'mnt':
+                _show_maintenance_inline(chat_id, user_id)
+                return
+            if action == 'mnt_on':
+                MAINTENANCE_MODE = True
+                set_setting('MAINTENANCE_MODE', 'true')
+                _show_maintenance_inline(chat_id, user_id)
+                return
+            if action == 'mnt_off':
+                MAINTENANCE_MODE = False
+                set_setting('MAINTENANCE_MODE', 'false')
+                _show_maintenance_inline(chat_id, user_id)
+                return
+            if action == 'tts':
+                _show_clone_bot_menu(chat_id, user_id)
+                return
+            if action == 'tts_start':
+                if not CLONE_BOT_TOKEN:
+                    answer_callback(callback_query['id'], text='❌ ស្អម​កំណត់ Token ជា​មុន​សិន', show_alert=True)
+                    _show_clone_bot_menu(chat_id, user_id)
+                    return
+                _start_clone_bot(CLONE_BOT_TOKEN)
+                set_setting('CLONE_BOT_ACTIVE', 'true')
+                _show_clone_bot_menu(chat_id, user_id)
+                return
+            if action == 'tts_stop':
+                _stop_clone_bot()
+                set_setting('CLONE_BOT_ACTIVE', 'false')
+                _show_clone_bot_menu(chat_id, user_id)
+                return
+            if action == 'tts_token':
+                _prompt_admin_input(chat_id, user_id, 'clone_token',
+                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ 🎙 TTS Bot\n\n"
+                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'tts')
+                return
+            if action == 'tts_clear':
+                _stop_clone_bot()
+                CLONE_BOT_TOKEN = ""
+                set_setting('CLONE_BOT_TOKEN', '')
+                set_setting('CLONE_BOT_ACTIVE', 'false')
+                _show_clone_bot_menu(chat_id, user_id)
+                return
+            if action == 'tr':
+                _show_translate_bot_menu(chat_id, user_id)
+                return
+            if action == 'tr_start':
+                if not TRANSLATE_BOT_TOKEN:
+                    answer_callback(callback_query['id'], text='❌ ស្អម​កំណត់ Token ជា​មុន​សិន', show_alert=True)
+                    _show_translate_bot_menu(chat_id, user_id)
+                    return
+                _start_translate_bot(TRANSLATE_BOT_TOKEN)
+                set_setting('TRANSLATE_BOT_ACTIVE', 'true')
+                _show_translate_bot_menu(chat_id, user_id)
+                return
+            if action == 'tr_stop':
+                _stop_translate_bot()
+                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
+                _show_translate_bot_menu(chat_id, user_id)
+                return
+            if action == 'tr_token':
+                _prompt_admin_input(chat_id, user_id, 'translate_token',
+                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ 🌐 Translate Bot\n\n"
+                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'tr')
+                return
+            if action == 'tr_clear':
+                _stop_translate_bot()
+                TRANSLATE_BOT_TOKEN = ""
+                set_setting('TRANSLATE_BOT_TOKEN', '')
+                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
+                _show_translate_bot_menu(chat_id, user_id)
+                return
+            if action == 'add_acc':
+                _start_add_account_flow(chat_id, user_id, callback_query['message']['message_id'])
+                return
+            if action == 'del_type':
+                _show_delete_type_menu_inline(chat_id, user_id)
+                return
+            if action == 'buyers':
+                _export_buyers_report_inline(chat_id)
                 return
             return
 
@@ -3411,50 +3563,58 @@ def _show_clone_bot_detail(chat_id, bot_id, edit_msg_id=None):
         send_message(chat_id, text, parse_mode='HTML',
                      reply_to_message_id=False, reply_markup=kb)
 
-def _show_clone_bot_menu(chat_id):
+def _show_clone_bot_menu(chat_id, user_id=None):
+    uid        = user_id or chat_id
     token_ok   = bool(CLONE_BOT_TOKEN)
     is_running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
-    token_disp = f"<code>{CLONE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់​កំណត់"
-    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
+    token_disp = f"<code>{CLONE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនតាន​កំណត់"
+    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ចឹប់"
     msg = (
         f"🎙 <b>TTS Bot — Text to Voice</b>\n\n"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
-        f"<i>Bot នឹង​ប្តូរ​អក្សររបស់​អ្នក​ប្រើ​ជា​សំឡេង​ដោយ​ស្វ័យប្រវត្តិ</i>\n"
-        f"<i>🌐 គាំទ្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ລາວ · မြန်မာ · 日本語 ...</i>"
+        f"<i>Bot នឹង​ប្ត្ឧរ​អក្សរ​ជា​សំប័ក​ត្រកម្លស្វ័យប្រវត្តិ</i>\n"
+        f"<i>🌐 គាមត្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ...</i>"
     )
-    kb = CLONE_BOT_MENU_KEYBOARD_ACTIVE if is_running else CLONE_BOT_MENU_KEYBOARD_INACTIVE
-    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
+    _settings_edit(chat_id, uid, msg, _build_settings_tts_ikb())
 
-def _show_translate_bot_menu(chat_id):
+def _show_translate_bot_menu(chat_id, user_id=None):
+    uid        = user_id or chat_id
     token_ok   = bool(TRANSLATE_BOT_TOKEN)
     is_running = TRANSLATE_BOT_ACTIVE and _translate_bot_thread and _translate_bot_thread.is_alive()
-    token_disp = f"<code>{TRANSLATE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់​កំណត់"
-    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
+    token_disp = f"<code>{TRANSLATE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនតាន​កំណត់"
+    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ចឹប់"
     msg = (
         f"🌐 <b>Translate Bot — បកប្រែភាសា</b>\n\n"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
-        f"<i>Bot នឹង​បកប្រែ​អក្សររបស់​អ្នក​ប្រើ​ជាភាសា​ដែល​ជ្រើស​ដោយ​ស្វ័យប្រវត្តិ</i>\n"
-        f"<i>🌍 គាំទ្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ລາວ · မြန်မာ · 日本語 · ...</i>"
+        f"<i>Bot នឹង​បកប្រែ​អក្សរ​ជាភាសា​ដែល​ជ្រើស​ត្រកម្លស្វ័យប្រវត្តិ</i>\n"
+        f"<i>🌍 គាមត្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ...</i>"
     )
-    kb = TRANSLATE_BOT_MENU_KB_ACTIVE if is_running else TRANSLATE_BOT_MENU_KB_INACTIVE
-    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
+    _settings_edit(chat_id, uid, msg, _build_settings_tr_ikb())
 
 def _show_clone_main_menu(chat_id):
-    """Show the top-level Clone Bot menu: 2 features."""
-    send_message(chat_id, "🤖 Clone Bot", reply_to_message_id=False, reply_markup=CLONE_MAIN_KB)
-    msg = (
-        "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
-        "  🎙 <b>បង្កើតសំឡេង Ai</b>\n"
-        "  🌐 <b>បកប្រែភាសា</b>"
-    )
-    kb = {'inline_keyboard': [
-        [{'text': "🎙 បង្កើតសំឡេង Ai", 'callback_data': 'clone_feat_voice'}],
-        [{'text': "🌐 បកប្រែភាសា",     'callback_data': 'clone_feat_translate'}],
-    ]}
-    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
+    """Redirect to TTS bot menu (legacy)."""
+    _show_clone_bot_menu(chat_id)
 
+def _dispatch_settings_panel(chat_id, user_id, key):
+    """Navigate the settings inline panel to a sub-menu by key."""
+    if key == 'pay':
+        _show_payment_inline(chat_id, user_id)
+    elif key == 'bak':
+        _show_bakong_inline(chat_id, user_id)
+    elif key == 'ch':
+        _show_channel_inline(chat_id, user_id)
+    elif key == 'adm':
+        _show_admins_inline(chat_id, user_id)
+    elif key == 'mnt':
+        _show_maintenance_inline(chat_id, user_id)
+    elif key == 'tts':
+        _show_clone_bot_menu(chat_id, user_id)
+    elif key == 'tr':
+        _show_translate_bot_menu(chat_id, user_id)
+    else:
+        _settings_edit(chat_id, user_id, _settings_main_text(), SETTINGS_MAIN_IKB)
 # ── Main message handler ──────────────────────────────────────────────────────
 def handle_message(update):
     global MAINTENANCE_MODE, PAYMENT_NAME, CHANNEL_ID, CLONE_BOT_TOKEN
@@ -3654,146 +3814,7 @@ def handle_message(update):
                                  reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                     return
 
-        if is_admin(user_id) and text.strip() in ADMIN_BUTTON_LABELS:
-            btn = text.strip()
-            if btn == BTN_BACK_SETTINGS:
-                if user_id in user_sessions:
-                    with _data_lock:
-                        del user_sessions[user_id]
-                    save_sessions_async()
-                send_admin_settings_menu(chat_id)
-                return
-            if btn == BTN_ADD_ACCOUNT:
-                _start_add_account_flow(chat_id, user_id, message_id)
-                return
-            if btn == BTN_DELETE_TYPE:
-                _show_delete_type_menu_inline(chat_id, user_id)
-                return
-            if btn == BTN_BUYERS:
-                _export_buyers_report_inline(chat_id)
-                return
-            if btn == BTN_PAYMENT:
-                _show_payment_inline(chat_id)
-                return
-            if btn == BTN_BAKONG:
-                _show_bakong_inline(chat_id)
-                return
-            if btn == BTN_CHANNEL:
-                _show_channel_inline(chat_id)
-                return
-            if btn == BTN_MAINTENANCE:
-                _show_maintenance_inline(chat_id)
-                return
-            if btn == '🤖 Clone Bot':
-                _show_clone_main_menu(chat_id)
-                return
-            if btn == BTN_PAYMENT_EDIT:
-                _prompt_admin_input(chat_id, user_id, 'payment', "💳 សូមផ្ញើ <b>ឈ្មោះ Payment</b> ថ្មី (1–60 តួអក្សរ)៖")
-                return
-            if btn == BTN_BAKONG_EDIT:
-                _prompt_admin_input(chat_id, user_id, 'bakong', "🔑 សូមផ្ញើ <b>Bakong Token</b> ថ្មី៖")
-                return
-            if btn == BTN_CHANNEL_EDIT:
-                _prompt_admin_input(chat_id, user_id, 'channel', "📢 សូមផ្ញើ <b>Channel ID</b> ថ្មី (លេខ ដូចជា <code>-1001234567890</code>)៖")
-                return
-            if btn == BTN_CHANNEL_CLEAR:
-                CHANNEL_ID = ""
-                set_setting('TELEGRAM_CHANNEL_ID', "")
-                send_message(chat_id, "✅ បានលុប Channel ID រួចរាល់", parse_mode="HTML",
-                             reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                return
-            if btn == BTN_ADMIN_ADD:
-                _prompt_admin_input(chat_id, user_id, 'admin_add', "➕ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់បន្ថែមជា Admin៖")
-                return
-            if btn == BTN_ADMIN_REMOVE:
-                _prompt_admin_input(chat_id, user_id, 'admin_remove', "➖ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ដក៖")
-                return
-            if btn == BTN_MAINT_ON:
-                MAINTENANCE_MODE = True
-                set_setting('MAINTENANCE_MODE', 'true')
-                send_message(chat_id, "🔴 បានបិទ Bot", parse_mode="HTML",
-                             reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                return
-            if btn == BTN_MAINT_OFF:
-                MAINTENANCE_MODE = False
-                set_setting('MAINTENANCE_MODE', 'false')
-                send_message(chat_id, "🟢 បានបើក Bot", parse_mode="HTML",
-                             reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                return
-            if btn == BTN_CLONE_BOT:
-                _show_clone_bot_menu(chat_id)
-                return
-            if btn == BTN_TRANSLATE:
-                _show_translate_bot_menu(chat_id)
-                return
-            # ── TTS Bot controls ──────────────────────────────────────────────
-            if btn == BTN_CLONE_START:
-                if not CLONE_BOT_TOKEN:
-                    send_message(chat_id, "❌ សូម​កំណត់ Token ជា​មុន​សិន",
-                                 reply_to_message_id=False,
-                                 reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
-                    return
-                _start_clone_bot(CLONE_BOT_TOKEN)
-                set_setting('CLONE_BOT_ACTIVE', 'true')
-                send_message(chat_id, "🟢 <b>TTS Bot ចាប់ផ្តើម​ដំណើរការ!</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=CLONE_BOT_MENU_KEYBOARD_ACTIVE)
-                return
-            if btn == BTN_CLONE_STOP:
-                _stop_clone_bot()
-                set_setting('CLONE_BOT_ACTIVE', 'false')
-                send_message(chat_id, "🔴 <b>TTS Bot បាន​បញ្ឈប់</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
-                return
-            if btn == BTN_CLONE_SET_TOKEN:
-                _prompt_admin_input(chat_id, user_id, 'clone_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b> របស់ 🎙 TTS Bot\n\n"
-                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>")
-                return
-            if btn == BTN_CLONE_TOKEN_CLEAR:
-                _stop_clone_bot()
-                CLONE_BOT_TOKEN = ""
-                set_setting('CLONE_BOT_TOKEN', '')
-                set_setting('CLONE_BOT_ACTIVE', 'false')
-                send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ TTS Bot</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
-                return
-            # ── Translate Bot controls ────────────────────────────────────────
-            if btn == BTN_TR_START:
-                if not TRANSLATE_BOT_TOKEN:
-                    send_message(chat_id, "❌ សូម​កំណត់ Token ជា​មុន​សិន",
-                                 reply_to_message_id=False,
-                                 reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE)
-                    return
-                _start_translate_bot(TRANSLATE_BOT_TOKEN)
-                set_setting('TRANSLATE_BOT_ACTIVE', 'true')
-                send_message(chat_id, "🟢 <b>Translate Bot ចាប់ផ្តើម​ដំណើរការ!</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=TRANSLATE_BOT_MENU_KB_ACTIVE)
-                return
-            if btn == BTN_TR_STOP:
-                _stop_translate_bot()
-                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
-                send_message(chat_id, "🔴 <b>Translate Bot បាន​បញ្ឈប់</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE)
-                return
-            if btn == BTN_TR_SET_TOKEN:
-                _prompt_admin_input(chat_id, user_id, 'translate_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b> របស់ 🌐 Translate Bot\n\n"
-                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>")
-                return
-            if btn == BTN_TR_TOKEN_CLEAR:
-                _stop_translate_bot()
-                TRANSLATE_BOT_TOKEN = ""
-                set_setting('TRANSLATE_BOT_TOKEN', '')
-                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
-                send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ Translate Bot</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=TRANSLATE_BOT_MENU_KB_INACTIVE)
-                return
+
         if user_id in user_sessions:
             session = user_sessions[user_id]
 
