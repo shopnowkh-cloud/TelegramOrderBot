@@ -6,8 +6,13 @@ requires-python = ">=3.11"
 dependencies = [
     "bakong-khqr>=0.4.12",
     "pillow>=11.3.0",
-    "python-telegram-bot>=22.3",
     "qrcode>=8.2",
     "requests>=2.32.4",
-    "telegram>=0.0.1",
+    "pyrogram>=2.0.106",
+    "tgcrypto>=1.2.5",
+    "pyaes>=1.6.1",
+    "PySocks>=1.7.1",
+    "edge-tts>=7.2.8",
+    "deep-translator>=1.11.4",
+    "imageio-ffmpeg>=0.6.0",
 ]
