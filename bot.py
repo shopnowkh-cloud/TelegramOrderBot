@@ -3518,14 +3518,36 @@ def _show_clone_bot_menu(chat_id, user_id=None):
     )
     _settings_edit(chat_id, uid, msg, _build_settings_tts_ikb())
 
+def _get_bot_info(token):
+    """Fetch bot name and username via getMe. Returns (name, username) or (None, None)."""
+    try:
+        resp = http.get(f"https://api.telegram.org/bot{token}/getMe", timeout=8)
+        data = resp.json()
+        if data.get('ok'):
+            r = data['result']
+            name     = r.get('first_name', '')
+            username = r.get('username', '')
+            return name, username
+    except Exception:
+        pass
+    return None, None
+
 def _show_translate_bot_menu(chat_id, user_id=None):
     uid        = user_id or chat_id
     token_ok   = bool(TRANSLATE_BOT_TOKEN)
     is_running = TRANSLATE_BOT_ACTIVE and _translate_bot_thread and _translate_bot_thread.is_alive()
     token_disp = f"<code>{TRANSLATE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនតាន​កំណត់"
     status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ចឹប់"
+    bot_info_line = ""
+    if token_ok:
+        b_name, b_username = _get_bot_info(TRANSLATE_BOT_TOKEN)
+        if b_name or b_username:
+            name_part = f"<b>{html.escape(b_name)}</b>" if b_name else ""
+            user_part = f"@{b_username}" if b_username else ""
+            bot_info_line = f"🤖 Bot: {name_part} {user_part}\n"
     msg = (
         f"🌐 <b>Translate Bot — បកប្រែភាសា</b>\n\n"
+        f"{bot_info_line}"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
         f"<i>Bot នឹង​បកប្រែ​អក្សរ​ជាភាសា​ដែល​ជ្រើស​ត្រកម្លស្វ័យប្រវត្តិ</i>\n"
