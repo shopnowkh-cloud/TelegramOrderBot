@@ -3513,12 +3513,20 @@ def _show_clone_bot_menu(chat_id, user_id=None):
     is_running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
     token_disp = f"<code>{CLONE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនតាន​កំណត់"
     status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ចឹប់"
+    bot_info_line = ""
+    if token_ok:
+        b_name, b_username = _get_bot_info(CLONE_BOT_TOKEN)
+        if b_name or b_username:
+            name_part = f"<b>{html.escape(b_name)}</b>" if b_name else ""
+            user_part = f"@{b_username}" if b_username else ""
+            bot_info_line = f"🤖 Bot: {name_part} {user_part}\n"
     msg = (
         f"🎙 <b>TTS Bot — Text to Voice</b>\n\n"
+        f"{bot_info_line}"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
         f"<i>Bot នឹង​ប្ត្ឧរ​អក្សរ​ជា​សំប័ក​ត្រកម្លស្វ័យប្រវត្តិ</i>\n"
-        f"<i>🌐 គាមត្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ...</i>"
+        f"<i>🌐 គាមត្រ: ខ្មែរ · English · 中文 · ภាษาไทย · ...</i>"
     )
     _settings_edit(chat_id, uid, msg, _build_settings_tts_ikb())
 
