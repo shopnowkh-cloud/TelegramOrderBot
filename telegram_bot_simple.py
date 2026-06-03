@@ -1308,8 +1308,8 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_ADD_ACCOUNT}, {'text': BTN_DELETE_TYPE}],
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
-        [{'text': BTN_MAINTENANCE}, {'text': BTN_CLONE_BOT, 'icon_custom_emoji_id': '6125301608151523076'}],
-        [{'text': BTN_TRANSLATE}],
+        [{'text': BTN_MAINTENANCE}],
+        [{'text': BTN_TRANSLATE}, {'text': BTN_CLONE_BOT, 'icon_custom_emoji_id': '6125301608151523076'}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
