@@ -3137,7 +3137,9 @@ def _stop_clone2():
     _clone2_stop_event = None
 
 def _show_clone_main_menu(chat_id):
-    """Show the top-level Clone Bot menu: 2 features."""
+    """Show the top-level Clone Bot menu: 2 features + clone bot."""
+    is_running = CLONE2_ACTIVE and _clone2_thread and _clone2_thread.is_alive()
+    clone_icon = "🟢" if is_running else "🔴"
     msg = (
         "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
         "  🎙 <b>បង្កើតសំឡេង Ai</b>\n"
@@ -3146,6 +3148,7 @@ def _show_clone_main_menu(chat_id):
     kb = {'inline_keyboard': [
         [{'text': "🎙 បង្កើតសំឡេង Ai", 'callback_data': 'clone_feat_voice'}],
         [{'text': "🌐 បកប្រែភាសា",     'callback_data': 'clone_feat_translate'}],
+        [{'text': f"{clone_icon} Clone Bot", 'callback_data': 'clone_feat_bots'}],
     ]}
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
