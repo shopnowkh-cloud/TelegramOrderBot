@@ -1354,6 +1354,10 @@ TRANSLATE_SUBMENU_KEYBOARD = {
     'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
     'resize_keyboard': True, 'is_persistent': True
 }
+CLONE_MAIN_KB = {
+    'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
+}
 CANCEL_INPUT_KEYBOARD = {
     'keyboard': [[{'text': BTN_CANCEL_INPUT}]],
     'resize_keyboard': True, 'one_time_keyboard': False, 'is_persistent': True
@@ -3035,6 +3039,7 @@ def _show_clone_bot_menu(chat_id):
 
 def _show_clone_main_menu(chat_id):
     """Show the top-level Clone Bot menu: 2 features."""
+    send_message(chat_id, "🤖 Clone Bot", reply_to_message_id=False, reply_markup=CLONE_MAIN_KB)
     msg = (
         "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
         "  🎙 <b>បង្កើតសំឡេង Ai</b>\n"
