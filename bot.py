@@ -4071,6 +4071,10 @@ def main():
     _ka_thread.start()
     logger.info("Neon keep-alive thread started (ping every 4 minutes)")
 
+    if CLONE_BOT_ACTIVE and CLONE_BOT_TOKEN:
+        _start_clone_bot(CLONE_BOT_TOKEN)
+        logger.info("TTS Clone Bot resumed from saved state")
+
     _load_clone_bots()
     for _cb in list(_clone_bots_list):
         if _cb.get('active') and _cb.get('token'):
