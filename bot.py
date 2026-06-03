@@ -3110,11 +3110,11 @@ def _clone_handle_update(base_url, update):
         _clone_bot_prefs[user_id].pop('translate_name', None)
         _clone_bot_prefs[user_id]['clone_mode'] = 'voice'
         _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-            text='<tg-emoji emoji-id="5798587088077066898">👋</tg-emoji> <b>សួស្តី!</b>\n\n'
-                 '🎙 <b>TTS</b> — សរសេរអក្សរ → បំប្លែងជាសំឡេង\n'
-                 '🌐 <b>បកប្រែភាសា</b> — សរសេរអក្សរ → បកប្រែ (អក្សរ)\n\n'
-                 '<i>ជ្រើសរើសមុខងារពី menu ខាងក្រោម</i> 👇',
+            text='<tg-emoji emoji-id="5798587088077066898">👋</tg-emoji> <b>សួស្តី</b> Sovannrady\n\n'
+                 '<b>ខ្ញុំជា Text to voice bot</b>\n\n'
+                 '<tg-emoji emoji-id="5471978009449731768">👉</tg-emoji><i>គ្រាន់តែ សរសេរអក្សរណាមួយ ហើយ ខ្ញុំនឹងបំប្លែងជាសំឡេងដោយស្វ័យប្រវត្តិ។</i>',
             parse_mode="HTML",
+            message_effect_id="5104841245755180586",
             reply_markup=_CLONE_START_KB)
         return
 
