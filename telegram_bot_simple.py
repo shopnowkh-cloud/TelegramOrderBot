@@ -3045,28 +3045,25 @@ def _show_clone_bot_menu(chat_id):
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
 def _show_clone_main_menu(chat_id):
-    """Show the top-level Clone Bot menu with three feature inline buttons."""
+    """Show the top-level Clone Bot menu: 2 features + clone section."""
     with _clone_bots_lock:
         count = len(_clone_bots_list)
     active_bots = sum(1 for b in _clone_bots_list if b.get('thread') and b['thread'].is_alive())
 
-    token_ok   = bool(CLONE_BOT_TOKEN)
-    is_running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
-
     clone_status = f"🟢 {active_bots}/{count}" if active_bots else (f"🔴 {count} Bot" if count else "🔴 គ្មាន")
-    voice_status = "🟢 ដំណើរការ" if is_running else ("🔑 មិនទាន់​កំណត់" if not token_ok else "🔴 បញ្ឈប់")
 
     msg = (
         "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
-        "ជ្រើសរើសមុខងារដែលចង់ប្រើ:\n\n"
-        f"  🤖 <b>Clone Bot</b> — {clone_status}\n"
-        f"  🎙 <b>បង្កើតសំឡេង Ai</b> — {voice_status}\n"
-        f"  🌐 <b>បកប្រែភាសា</b>"
+        "━━━━ មុខងារ ━━━━\n"
+        "  🎙 <b>បង្កើតសំឡេង Ai</b>\n"
+        "  🌐 <b>បកប្រែភាសា</b>\n\n"
+        "━━━━ Clone ━━━━\n"
+        f"  🤖 <b>Clone Bot</b> — {clone_status}"
     )
     kb = {'inline_keyboard': [
+        [{'text': "🎙 បង្កើតសំឡេង Ai", 'callback_data': 'clone_feat_voice'}],
+        [{'text': "🌐 បកប្រែភាសា",     'callback_data': 'clone_feat_translate'}],
         [{'text': f"🤖 Clone Bot  ({clone_status})", 'callback_data': 'clone_feat_bots'}],
-        [{'text': f"🎙 បង្កើតសំឡេង Ai  ({voice_status})", 'callback_data': 'clone_feat_voice'}],
-        [{'text': "🌐 បកប្រែភាសា", 'callback_data': 'clone_feat_translate'}],
     ]}
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
