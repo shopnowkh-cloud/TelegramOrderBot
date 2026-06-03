@@ -2296,7 +2296,15 @@ def handle_callback_query(update):
 
         elif callback_data == 'clone_feat_translate' and is_admin(user_id):
             answer_callback(callback_query['id'])
-            _show_translate_menu(chat_id, user_id)
+            kb = {'inline_keyboard': [
+                [{'text': '🤖 ចូលទៅ Clone Bot', 'callback_data': 'clone_feat_bots'}],
+            ]}
+            send_message(chat_id,
+                "🌐 <b>បកប្រែភាសា</b>\n\n"
+                "⚠️ មុខងារនេះ <b>មិនដំណើរការ</b> នៅ Admin Bot ទេ។\n\n"
+                "ត្រូវ <b>Clone</b> ទៅ Bot ផ្សេង រួចប្រើ Token Bot នោះ "
+                "ដើម្បីឱ្យអ្នកប្រើ​ message ទៅ Clone Bot → Bot នោះ​នឹង​បកប្រែ​ដោយ​ស្វ័យប្រវត្តិ។",
+                parse_mode='HTML', reply_to_message_id=False, reply_markup=kb)
             return
 
         elif callback_data == 'cbm_list' and is_admin(user_id):
@@ -3336,7 +3344,15 @@ def handle_message(update):
                 _show_clone_main_menu(chat_id)
                 return
             if btn == BTN_TRANSLATE:
-                _show_translate_menu(chat_id, user_id)
+                kb = {'inline_keyboard': [
+                    [{'text': '🤖 ចូលទៅ Clone Bot', 'callback_data': 'clone_feat_bots'}],
+                ]}
+                send_message(chat_id,
+                    "🌐 <b>បកប្រែភាសា</b>\n\n"
+                    "⚠️ មុខងារនេះ <b>មិនដំណើរការ</b> នៅ Admin Bot ទេ។\n\n"
+                    "ត្រូវ <b>Clone</b> ទៅ Bot ផ្សេង រួចប្រើ Token Bot នោះ "
+                    "ដើម្បីឱ្យអ្នកប្រើ​ message ទៅ Clone Bot → Bot នោះ​នឹង​បកប្រែ​ដោយ​ស្វ័យប្រវត្តិ។",
+                    parse_mode='HTML', reply_to_message_id=False, reply_markup=kb)
                 return
             if btn == BTN_CLONE_START:
                 if not CLONE_BOT_TOKEN:
