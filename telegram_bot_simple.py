@@ -1371,14 +1371,12 @@ CLONE2_KB_ACTIVE = {
     'keyboard': [
         [{'text': BTN_CLONE2_STOP}],
         [{'text': BTN_CLONE2_SET_TOKEN}, {'text': BTN_CLONE2_CLR_TOKEN}],
-        [{'text': BTN_CLONE_MENU}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
 CLONE2_KB_INACTIVE = {
     'keyboard': [
         [{'text': BTN_CLONE2_START}],
         [{'text': BTN_CLONE2_SET_TOKEN}, {'text': BTN_CLONE2_CLR_TOKEN}],
-        [{'text': BTN_CLONE_MENU}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
 TRANSLATE_SUBMENU_KEYBOARD = {
