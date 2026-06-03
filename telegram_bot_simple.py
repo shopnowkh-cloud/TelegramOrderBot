@@ -1307,7 +1307,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
         [{'text': BTN_MAINTENANCE}],
-        [{'text': BTN_TRANSLATE}, {'text': BTN_CLONE_BOT, 'icon_custom_emoji_id': '6125301608151523076'}],
+        [{'text': BTN_CLONE_BOT, 'icon_custom_emoji_id': '6125301608151523076'}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -1389,7 +1389,6 @@ ADMIN_BUTTON_LABELS = {
     BTN_MAINT_ON, BTN_MAINT_OFF,
     BTN_CLONE_BOT, BTN_CLONE_START, BTN_CLONE_STOP,
     BTN_CLONE_SET_TOKEN, BTN_CLONE_TOKEN_CLEAR,
-    BTN_TRANSLATE,
 }
 
 # ── Translation helpers ───────────────────────────────────────────────────────
@@ -3006,36 +3005,11 @@ def handle_message(update):
                              parse_mode="HTML", reply_to_message_id=False,
                              reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
                 return
-            if btn == BTN_TRANSLATE:
-                _show_translate_menu(chat_id, user_id)
-                return
-
         if user_id in user_sessions:
             session = user_sessions[user_id]
 
             if session.get('state') == 'payment_pending':
                 _remind_pending_payment(chat_id, session)
-                return
-
-            if session.get('state') == 'translate_mode' and is_admin(user_id):
-                lang_code = session.get('lang_code', 'en')
-                lang_name = session.get('lang_name', lang_code)
-                if not text or not text.strip():
-                    send_message(chat_id, "💬 សូម​ផ្ញើ​អក្សរ​ដែល​ចង់​បកប្រែ។",
-                                 reply_to_message_id=False, reply_markup=TRANSLATE_SUBMENU_KEYBOARD)
-                    return
-                translated = _translate_text(text.strip(), lang_code)
-                if translated:
-                    send_message(
-                        chat_id,
-                        f"🌐 <b>{lang_name}</b>\n\n<blockquote>{html.escape(translated)}</blockquote>",
-                        parse_mode="HTML",
-                        reply_to_message_id=False,
-                        reply_markup=TRANSLATE_SUBMENU_KEYBOARD
-                    )
-                else:
-                    send_message(chat_id, "❌ មានបញ្ហាក្នុងការបកប្រែ សូម​ព្យាយាម​ម្តងទៀត។",
-                                 reply_to_message_id=False, reply_markup=TRANSLATE_SUBMENU_KEYBOARD)
                 return
 
             if session['state'] == 'waiting_for_quantity':
