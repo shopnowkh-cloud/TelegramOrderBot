@@ -9,3 +9,14 @@ Pillow==12.2.0
 edge-tts
 imageio-ffmpeg
 deep-translator
+bakong-khqr
+deep-translator
+edge-tts
+imageio-ffmpeg
+pillow
+pyaes
+pyrogram
+PySocks
+qrcode
+requests
+tgcrypto
