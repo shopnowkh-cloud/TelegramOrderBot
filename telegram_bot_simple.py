@@ -1256,7 +1256,7 @@ BTN_DELETE_CONFIRM  = '✅ បញ្ជាក់លុប'
 BTN_DELETE_CANCEL   = '🚫 បោះបង់ការលុប'
 BTN_BROADCAST_CONFIRM = '✅ បញ្ជាក់ផ្សាយ'
 BTN_BROADCAST_CANCEL  = '🚫 បោះបង់ការផ្សាយ'
-BTN_CLONE_BOT         = '🤖 Clone Bot'
+BTN_CLONE_BOT         = 'បង្កើតសំឡេង Ai'
 BTN_CLONE_START       = '▶️ ចាប់ផ្តើម Clone Bot'
 BTN_CLONE_STOP        = '⏹ បញ្ឈប់ Clone Bot'
 BTN_CLONE_SET_TOKEN   = '🔑 កំណត់ Token'
@@ -2560,7 +2560,7 @@ def _show_clone_bot_menu(chat_id):
     token_disp = f"<code>{CLONE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់​កំណត់"
     status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
     msg = (
-        f"🤖 <b>Clone Bot — Text to Voice</b>\n\n"
+        f"🤖 <b>បង្កើតសំឡេង Ai — Text to Voice</b>\n\n"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
         f"<i>Clone Bot នឹង​ប្តូរ​អក្សររបស់​អ្នក​ប្រើ​ជា​សំឡេង​ដោយ​ស្វ័យប្រវត្តិ</i>\n"
