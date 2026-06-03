@@ -3048,7 +3048,8 @@ def _clone_handle_update(base_url, update):
             _clone_bot_prefs.setdefault(user_id, {})['gender'] = gender
             label = "👩 សំឡេងស្រី" if gender == 'female' else "👨 សំឡេងប្រុស"
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-                       text=f"✅ ប្តូរទៅ <b>{label}</b>", parse_mode="HTML")
+                       text=f'<tg-emoji emoji-id="6217467173917429904">✅</tg-emoji> <b>បានប្តូរទៅ {label}</b>',
+                       parse_mode="HTML")
         elif data.startswith('ttv_speed:'):
             speed = data.split(':', 1)[1]
             _clone_bot_prefs.setdefault(user_id, {})['speed'] = speed
