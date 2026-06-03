@@ -1309,6 +1309,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
         [{'text': BTN_MAINTENANCE}],
+        [{'text': '🤖 Clone Bot'}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -1388,7 +1389,7 @@ def _build_account_type_keyboard():
 
 ADMIN_BUTTON_LABELS = {
     BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_BUYERS,
-    BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_MAINTENANCE,
+    BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_MAINTENANCE, '🤖 Clone Bot',
     BTN_BACK_SETTINGS,
     BTN_PAYMENT_EDIT, BTN_BAKONG_EDIT,
     BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR,
@@ -3417,6 +3418,9 @@ def handle_message(update):
                 return
             if btn == BTN_MAINTENANCE:
                 _show_maintenance_inline(chat_id)
+                return
+            if btn == '🤖 Clone Bot':
+                _show_clone_main_menu(chat_id)
                 return
             if btn == BTN_PAYMENT_EDIT:
                 _prompt_admin_input(chat_id, user_id, 'payment', "💳 សូមផ្ញើ <b>ឈ្មោះ Payment</b> ថ្មី (1–60 តួអក្សរ)៖")
