@@ -1308,7 +1308,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
         [{'text': BTN_MAINTENANCE}],
-        [{'text': BTN_TRANSLATE}, {'text': BTN_CLONE_BOT, 'icon_custom_emoji_id': '6125301608151523076'}, {'text': BTN_CLONE_MENU}],
+        [{'text': BTN_TRANSLATE}, {'text': BTN_CLONE_MENU}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -1338,6 +1338,7 @@ CLONE_BOT_MENU_KEYBOARD_ACTIVE = {
     'keyboard': [
         [{'text': BTN_CLONE_STOP}],
         [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
+        [{'text': BTN_CLONE_BOT}],
         [{'text': BTN_BACK_SETTINGS}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
@@ -1345,6 +1346,7 @@ CLONE_BOT_MENU_KEYBOARD_INACTIVE = {
     'keyboard': [
         [{'text': BTN_CLONE_START}],
         [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
+        [{'text': BTN_CLONE_BOT}],
         [{'text': BTN_BACK_SETTINGS}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
