@@ -20,12 +20,12 @@ args = "Working Bot"
 name = "Working Bot"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python telegram_bot_simple.py"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [agent]
 expertMode = true
