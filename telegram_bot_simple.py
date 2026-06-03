@@ -1360,7 +1360,7 @@ ADMIN_BUTTON_LABELS = {
 def send_admin_settings_menu(chat_id):
     send_message(
         chat_id,
-        "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖\n\n<tg-emoji emoji-id=\"6125301608151523076\">🌟</tg-emoji> បង្កើតសំឡេង Ai",
+        "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖",
         parse_mode="HTML",
         reply_to_message_id=False,
         reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
