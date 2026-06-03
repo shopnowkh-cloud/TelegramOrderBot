@@ -67,6 +67,8 @@ CLONE_BOT_TOKEN = ""
 CLONE_BOT_ACTIVE = False
 _clone_bot_thread = None
 _clone_bot_prefs: dict = {}
+_clone_bots_list: list = []
+_clone_bots_lock  = threading.Lock()
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
@@ -1308,7 +1310,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
         [{'text': BTN_MAINTENANCE}],
-        [{'text': BTN_CLONE_MENU}],
+        [{'text': BTN_CLONE_MENU, 'style': 'primary'}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -2282,6 +2284,84 @@ def handle_callback_query(update):
                 return
             return
 
+        elif callback_data == 'cbm_list' and is_admin(user_id):
+            answer_callback(callback_query['id'])
+            _show_clone_bots_list(chat_id)
+            return
+
+        elif callback_data == 'cbm_add' and is_admin(user_id):
+            answer_callback(callback_query['id'])
+            with _data_lock:
+                user_sessions[user_id] = {'state': 'clone_add_name'}
+            save_sessions_async()
+            send_message(chat_id,
+                "🤖 <b>បន្ថែម Clone Bot ថ្មី</b>\n\nសូមផ្ញើ <b>ឈ្មោះ</b> Clone Bot:",
+                parse_mode='HTML', reply_to_message_id=False,
+                reply_markup=CANCEL_INPUT_KEYBOARD)
+            return
+
+        elif callback_data.startswith('cbm:') and is_admin(user_id):
+            bot_id = callback_data[4:]
+            answer_callback(callback_query['id'])
+            _show_clone_bot_detail(chat_id, bot_id,
+                                   edit_msg_id=callback_query['message']['message_id'])
+            return
+
+        elif callback_data.startswith('cbm_start:') and is_admin(user_id):
+            bot_id = callback_data[10:]
+            ok = _start_clone_bot_by_id(bot_id)
+            answer_callback(callback_query['id'], '🟢 ចាប់ផ្តើម!' if ok else '❌ Token មិនទាន់​កំណត់')
+            _show_clone_bot_detail(chat_id, bot_id,
+                                   edit_msg_id=callback_query['message']['message_id'])
+            return
+
+        elif callback_data.startswith('cbm_stop:') and is_admin(user_id):
+            bot_id = callback_data[9:]
+            _stop_clone_bot_by_id(bot_id)
+            answer_callback(callback_query['id'], '🔴 បានបញ្ឈប់')
+            _show_clone_bot_detail(chat_id, bot_id,
+                                   edit_msg_id=callback_query['message']['message_id'])
+            return
+
+        elif callback_data.startswith('cbm_token:') and is_admin(user_id):
+            bot_id = callback_data[10:]
+            answer_callback(callback_query['id'])
+            with _data_lock:
+                user_sessions[user_id] = {'state': 'clone_set_token', 'bot_id': bot_id}
+            save_sessions_async()
+            send_message(chat_id,
+                "🔑 <b>សូមផ្ញើ Bot Token ថ្មី</b>\n<i>ទទួលពី @BotFather → /mybots → API Token</i>",
+                parse_mode='HTML', reply_to_message_id=False,
+                reply_markup=CANCEL_INPUT_KEYBOARD)
+            return
+
+        elif callback_data.startswith('cbm_del:') and is_admin(user_id):
+            bot_id = callback_data[8:]
+            answer_callback(callback_query['id'])
+            kb = {'inline_keyboard': [[
+                {'text': '✅ បញ្ជាក់លុប', 'callback_data': f"cbm_delok:{bot_id}"},
+                {'text': '🚫 បោះបង់',    'callback_data': f"cbm:{bot_id}"},
+            ]]}
+            _tg_api('editMessageReplyMarkup',
+                    chat_id=chat_id,
+                    message_id=callback_query['message']['message_id'],
+                    reply_markup=kb)
+            return
+
+        elif callback_data.startswith('cbm_delok:') and is_admin(user_id):
+            bot_id = callback_data[10:]
+            _stop_clone_bot_by_id(bot_id)
+            with _clone_bots_lock:
+                _clone_bots_list[:] = [b for b in _clone_bots_list if b['id'] != bot_id]
+            _save_clone_bots()
+            answer_callback(callback_query['id'], '✅ បានលុបហើយ')
+            _tg_api('editMessageText',
+                    chat_id=chat_id,
+                    message_id=callback_query['message']['message_id'],
+                    text="✅ <b>បានលុប Clone Bot</b>", parse_mode='HTML',
+                    reply_markup=_clone_bots_inline_kb())
+            return
+
         elif callback_data == 'cancel_buy':
             answer_callback(callback_query['id'])
             with _data_lock:
@@ -2696,6 +2776,155 @@ def _stop_clone_bot():
     CLONE_BOT_ACTIVE = False
     _clone_bot_thread = None
 
+# ── Multi-bot clone management ────────────────────────────────────────────────
+def _clone_bot_loop_v2(token, stop_event):
+    base_url = f"https://api.telegram.org/bot{token}/"
+    offset   = None
+    logger.info(f"Clone Bot [{token[:10]}...] started")
+    while not stop_event.is_set():
+        try:
+            params = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
+            if offset is not None:
+                params['offset'] = offset
+            resp = http.get(f"{base_url}getUpdates", params=params, timeout=40)
+            data = resp.json()
+            if data.get('ok'):
+                for upd in data.get('result', []):
+                    offset = upd['update_id'] + 1
+                    worker_pool.submit(_clone_handle_update, base_url, upd)
+            else:
+                logger.warning(f"Clone Bot [{token[:10]}...]: {data.get('description')}")
+                stop_event.wait(3)
+        except Exception as e:
+            if not stop_event.is_set():
+                logger.error(f"Clone Bot [{token[:10]}...] error: {e}")
+                stop_event.wait(3)
+    logger.info(f"Clone Bot [{token[:10]}...] stopped")
+
+def _load_clone_bots():
+    global _clone_bots_list
+    try:
+        raw = get_setting('CLONE_BOTS_LIST')
+        if raw:
+            saved = json.loads(raw)
+        else:
+            old_tok = get_setting('CLONE_BOT_TOKEN') or CLONE_BOT_TOKEN
+            if old_tok:
+                bid       = hashlib.md5(old_tok.encode()).hexdigest()[:8]
+                is_active = (get_setting('CLONE_BOT_ACTIVE') or '').lower() == 'true'
+                saved     = [{'id': bid, 'name': 'Clone Bot 1', 'token': old_tok, 'active': is_active}]
+            else:
+                saved = []
+        with _clone_bots_lock:
+            _clone_bots_list[:] = [
+                {'id': b['id'], 'name': b['name'], 'token': b['token'],
+                 'active': bool(b.get('active')), 'thread': None, 'stop_event': None}
+                for b in saved
+            ]
+        logger.info(f"Loaded {len(_clone_bots_list)} clone bot(s)")
+    except Exception as e:
+        logger.error(f"_load_clone_bots failed: {e}")
+
+def _save_clone_bots():
+    try:
+        with _clone_bots_lock:
+            to_save = [{'id': b['id'], 'name': b['name'], 'token': b['token'],
+                        'active': bool(b.get('active'))} for b in _clone_bots_list]
+        set_setting('CLONE_BOTS_LIST', json.dumps(to_save, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"_save_clone_bots failed: {e}")
+
+def _start_clone_bot_by_id(bot_id):
+    with _clone_bots_lock:
+        bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
+        if not bot or not bot.get('token'):
+            return False
+        if bot.get('stop_event'):
+            bot['stop_event'].set()
+        ev = threading.Event()
+        bot['stop_event'] = ev
+        bot['active']     = True
+        t = threading.Thread(target=_clone_bot_loop_v2, args=(bot['token'], ev),
+                             daemon=True, name=f"clone-{bot_id}")
+        bot['thread'] = t
+    t.start()
+    _save_clone_bots()
+    logger.info(f"Clone Bot {bot_id} started")
+    return True
+
+def _stop_clone_bot_by_id(bot_id):
+    with _clone_bots_lock:
+        bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
+        if not bot:
+            return
+        if bot.get('stop_event'):
+            bot['stop_event'].set()
+        bot['active']     = False
+        bot['thread']     = None
+        bot['stop_event'] = None
+    _save_clone_bots()
+    logger.info(f"Clone Bot {bot_id} stopped")
+
+def _clone_bots_inline_kb():
+    with _clone_bots_lock:
+        bots = list(_clone_bots_list)
+    rows = []
+    for b in bots:
+        alive = b.get('thread') and b['thread'].is_alive()
+        icon  = '🟢' if alive else '🔴'
+        rows.append([{'text': f"{icon} {b['name']}", 'callback_data': f"cbm:{b['id']}"}])
+    rows.append([{'text': '➕ បន្ថែម Clone Bot ថ្មី', 'callback_data': 'cbm_add'}])
+    return {'inline_keyboard': rows}
+
+def _show_clone_bots_list(chat_id):
+    with _clone_bots_lock:
+        count = len(_clone_bots_list)
+    msg = (
+        "🤖 <b>Clone Bot — ជ្រើសរើស</b>\n\n"
+        + ("<i>ជ្រើស Bot ដែលចង់គ្រប់គ្រង:</i>"
+           if count else
+           "<i>មិនទាន់មាន Clone Bot ទេ។ ចុច ➕ ដើម្បីបន្ថែមមួយ។</i>")
+    )
+    send_message(chat_id, msg, parse_mode='HTML',
+                 reply_to_message_id=False, reply_markup=_clone_bots_inline_kb())
+
+def _show_clone_bot_detail(chat_id, bot_id, edit_msg_id=None):
+    with _clone_bots_lock:
+        bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
+    if not bot:
+        kb = _clone_bots_inline_kb()
+        if edit_msg_id:
+            _tg_api('editMessageText', chat_id=chat_id, message_id=edit_msg_id,
+                    text="❌ Bot នេះមិនមានទៀតហើយ", reply_markup=kb)
+        else:
+            send_message(chat_id, "❌ Bot នេះមិនមានទៀតហើយ",
+                         reply_to_message_id=False, reply_markup=kb)
+        return
+    alive      = bot.get('thread') and bot['thread'].is_alive()
+    status     = "🟢 ដំណើរការ" if alive else "🔴 បញ្ឈប់"
+    token_disp = f"<code>{bot['token'][:12]}...</code>" if bot.get('token') else "❌ មិនទាន់​កំណត់"
+    text = (
+        f"🤖 <b>{html.escape(bot['name'])}</b>\n\n"
+        f"🔑 Token: {token_disp}\n"
+        f"📡 ស្ថានភាព: {status}\n\n"
+        f"<i>Clone Bot ប្តូរអក្សររបស់អ្នកប្រើជាសំឡេងដោយស្វ័យប្រវត្តិ</i>"
+    )
+    toggle = ({'text': '⏹ Stop', 'callback_data': f"cbm_stop:{bot_id}"}
+              if alive else
+              {'text': '▶️ Start', 'callback_data': f"cbm_start:{bot_id}"})
+    kb = {'inline_keyboard': [
+        [toggle],
+        [{'text': '🔑 Token', 'callback_data': f"cbm_token:{bot_id}"},
+         {'text': '🗑 លុប',   'callback_data': f"cbm_del:{bot_id}"}],
+        [{'text': '↩️ ត្រឡប់', 'callback_data': 'cbm_list'}],
+    ]}
+    if edit_msg_id:
+        _tg_api('editMessageText', chat_id=chat_id, message_id=edit_msg_id,
+                text=text, parse_mode='HTML', reply_markup=kb)
+    else:
+        send_message(chat_id, text, parse_mode='HTML',
+                     reply_to_message_id=False, reply_markup=kb)
+
 def _show_clone_bot_menu(chat_id):
     token_ok   = bool(CLONE_BOT_TOKEN)
     is_running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
@@ -2977,7 +3206,7 @@ def handle_message(update):
                 _show_clone_bot_menu(chat_id)
                 return
             if btn == BTN_CLONE_MENU:
-                _show_clone_bot_menu(chat_id)
+                _show_clone_bots_list(chat_id)
                 return
             if btn == BTN_TRANSLATE:
                 _show_translate_menu(chat_id, user_id)
@@ -3041,6 +3270,81 @@ def handle_message(update):
                 else:
                     send_message(chat_id, "❌ មានបញ្ហាក្នុងការបកប្រែ សូម​ព្យាយាម​ម្តងទៀត។",
                                  reply_to_message_id=False, reply_markup=TRANSLATE_SUBMENU_KEYBOARD)
+                return
+
+            if session.get('state') == 'clone_add_name' and is_admin(user_id):
+                raw_name = text.strip()
+                if not raw_name or raw_name == BTN_CANCEL_INPUT:
+                    with _data_lock:
+                        if user_id in user_sessions:
+                            del user_sessions[user_id]
+                    save_sessions_async()
+                    send_message(chat_id, "🚫 បានបោះបង់", reply_to_message_id=False,
+                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                    return
+                bot_id = hashlib.md5((raw_name + str(time.time())).encode()).hexdigest()[:8]
+                with _data_lock:
+                    user_sessions[user_id] = {'state': 'clone_add_token',
+                                              'bot_id': bot_id, 'bot_name': raw_name}
+                save_sessions_async()
+                send_message(chat_id,
+                    f"✅ ឈ្មោះ: <b>{html.escape(raw_name)}</b>\n\n"
+                    f"🔑 សូមផ្ញើ <b>Bot Token</b> ពី @BotFather:",
+                    parse_mode='HTML', reply_to_message_id=False,
+                    reply_markup=CANCEL_INPUT_KEYBOARD)
+                return
+
+            if session.get('state') == 'clone_add_token' and is_admin(user_id):
+                token    = text.strip()
+                bot_id   = session.get('bot_id')
+                bot_name = session.get('bot_name', 'Clone Bot')
+                if token == BTN_CANCEL_INPUT:
+                    with _data_lock:
+                        if user_id in user_sessions:
+                            del user_sessions[user_id]
+                    save_sessions_async()
+                    send_message(chat_id, "🚫 បានបោះបង់", reply_to_message_id=False,
+                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                    return
+                with _clone_bots_lock:
+                    _clone_bots_list.append({'id': bot_id, 'name': bot_name, 'token': token,
+                                             'active': False, 'thread': None, 'stop_event': None})
+                _save_clone_bots()
+                with _data_lock:
+                    if user_id in user_sessions:
+                        del user_sessions[user_id]
+                save_sessions_async()
+                delete_message_async(chat_id, message_id)
+                _show_clone_bot_detail(chat_id, bot_id)
+                return
+
+            if session.get('state') == 'clone_set_token' and is_admin(user_id):
+                token  = text.strip()
+                bot_id = session.get('bot_id')
+                if token == BTN_CANCEL_INPUT:
+                    with _data_lock:
+                        if user_id in user_sessions:
+                            del user_sessions[user_id]
+                    save_sessions_async()
+                    send_message(chat_id, "🚫 បានបោះបង់", reply_to_message_id=False,
+                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                    return
+                with _clone_bots_lock:
+                    bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
+                    if bot:
+                        if bot.get('stop_event'):
+                            bot['stop_event'].set()
+                        bot['token']     = token
+                        bot['active']    = False
+                        bot['thread']    = None
+                        bot['stop_event'] = None
+                _save_clone_bots()
+                with _data_lock:
+                    if user_id in user_sessions:
+                        del user_sessions[user_id]
+                save_sessions_async()
+                delete_message_async(chat_id, message_id)
+                _show_clone_bot_detail(chat_id, bot_id)
                 return
 
             if session['state'] == 'waiting_for_quantity':
@@ -3336,9 +3640,11 @@ def main():
     _ka_thread.start()
     logger.info("Neon keep-alive thread started (ping every 4 minutes)")
 
-    if CLONE_BOT_TOKEN and CLONE_BOT_ACTIVE:
-        _start_clone_bot(CLONE_BOT_TOKEN)
-        logger.info("Clone Bot resumed from previous session")
+    _load_clone_bots()
+    for _cb in list(_clone_bots_list):
+        if _cb.get('active') and _cb.get('token'):
+            _start_clone_bot_by_id(_cb['id'])
+            logger.info(f"Clone Bot '{_cb['name']}' resumed")
 
     try:
         _polling_loop()
