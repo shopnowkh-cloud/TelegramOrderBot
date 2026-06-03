@@ -1312,14 +1312,10 @@ TRANSLATE_LANGUAGES = {
     "mn": "🇲🇳 ម៉ុងហ្គោល",
 }
 
-BROADCAST_CONFIRM_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_BROADCAST_CONFIRM}],
-        [{'text': BTN_BROADCAST_CANCEL}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
-}
+BROADCAST_CONFIRM_KEYBOARD = {'inline_keyboard': [
+    [{'text': BTN_BROADCAST_CONFIRM, 'callback_data': 's:broadcast_confirm'},
+     {'text': BTN_BROADCAST_CANCEL,  'callback_data': 's:broadcast_cancel'}],
+]}
 
 # ── Settings panel — ALL inline (editMessageText navigation) ─────────────────
 ADMIN_SETTINGS_REPLY_KEYBOARD = {'remove_keyboard': True}   # keep name for compat
@@ -1399,10 +1395,7 @@ TRANSLATE_BOT_MENU_KB_INACTIVE   = None  # replaced by _build_settings_tr_ikb()
 TRANSLATE_SUBMENU_KEYBOARD = {'remove_keyboard': True}
 CLONE_MAIN_KB              = {'remove_keyboard': True}
 CANCEL_INPUT_KEYBOARD      = SETTINGS_CANCEL_IKB
-ADD_ACCOUNT_KEYBOARD = {
-    'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
-    'resize_keyboard': True, 'is_persistent': True
-}
+ADD_ACCOUNT_KEYBOARD = SETTINGS_CANCEL_IKB
 CONFIRM_REPLY_KEYBOARD = {
     'keyboard': [[{'text': '🚫 បោះបង់'}, {'text': '✅ យល់ព្រម'}]],
     'resize_keyboard': True, 'one_time_keyboard': True
@@ -1555,31 +1548,28 @@ def _show_users_list_inline(chat_id):
                      reply_to_message_id=False)
 
 def _show_delete_type_menu_inline(chat_id, user_id=None):
+    uid = user_id if user_id is not None else chat_id
     types = [
         t for t in accounts_data.get('account_types', {}).keys()
         if len(accounts_data['account_types'].get(t, [])) > 0
     ]
     if not types:
-        send_message(chat_id, "⚠️ <b>មិនមានប្រភេទ Account ណាមួយទេ!</b>",
-                     parse_mode="HTML", reply_to_message_id=None)
-        send_admin_settings_menu(chat_id)
+        _settings_edit(chat_id, uid, "⚠️ <b>មិនមានប្រភេទ Account ណាមួយទេ!</b>",
+                       {'inline_keyboard': [[{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}]]})
         return
     rows = []
-    labels_map = {}
-    for t in types:
-        count = len(accounts_data['account_types'].get(t, []))
-        price = accounts_data.get('prices', {}).get(t, 0)
-        label = f"{_short_label(t)} ({count} pcs · ${price})"
-        rows.append([{'text': label}])
-        labels_map[label] = t
-    rows.append([{'text': BTN_BACK_SETTINGS}])
-    reply_keyboard = {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
-    uid = user_id if user_id is not None else chat_id
-    with _data_lock:
-        user_sessions[uid] = {'state': 'delete_type_select', 'labels': labels_map}
-    save_sessions_async()
-    send_message(chat_id, "🗑 <b>ជ្រើសរើសប្រភេទ Account ដែលចង់លុប៖</b>",
-                 parse_mode="HTML", reply_to_message_id=False, reply_markup=reply_keyboard)
+    for i in range(0, len(types), 2):
+        row = []
+        for t in types[i:i+2]:
+            count = len(accounts_data['account_types'].get(t, []))
+            price = accounts_data.get('prices', {}).get(t, 0)
+            label = f"{_short_label(t)} ({count} · ${price})"
+            row.append({'text': label, 'callback_data': f"dts:{_type_callback_id(t)}"})
+        rows.append(row)
+    rows.append([{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}])
+    _settings_edit(chat_id, uid,
+                   "🗑 <b>ជ្រើសរើសប្រភេទ Account ដែលចង់លុប៖</b>",
+                   {'inline_keyboard': rows})
 
 def _export_buyers_report_inline(chat_id):
     try:
@@ -1648,9 +1638,7 @@ def _export_buyers_report_inline(chat_id):
         )
         if not result:
             send_message(chat_id, "❌ បរាជ័យក្នុងការផ្ញើ​ឯកសារ", reply_to_message_id=False)
-        else:
-            send_message(chat_id, "↩️ ត្រឡប់ទៅកំណត់",
-                         reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+        send_admin_settings_menu(chat_id)
     except Exception as e:
         logger.error(f"buyers export failed: {e}")
         send_message(chat_id, f"❌ Error: <code>{html.escape(str(e))}</code>",
@@ -1951,15 +1939,17 @@ def _run_broadcast(admin_chat_id, source_message_id, use_copy=False):
             f"⛔ បាន​ប្លុក/លុប:  {blocked}\n"
             f"❌ បរាជ័យ:        {failed}"
         )
+        back_ikb = {'inline_keyboard': [[{'text': '↩️ ត្រឡប់ទៅកំណត់', 'callback_data': 's:main'}]]}
         send_message(admin_chat_id, summary, parse_mode="HTML",
-                     reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                     reply_to_message_id=False, reply_markup=back_ikb)
     except Exception as e:
         logger.error(f"Broadcast crashed: {e}")
         try:
+            back_ikb = {'inline_keyboard': [[{'text': '↩️ ត្រឡប់ទៅកំណត់', 'callback_data': 's:main'}]]}
             send_message(admin_chat_id,
                          f"❌ Broadcast error: <code>{html.escape(str(e))}</code>",
                          parse_mode="HTML", reply_to_message_id=False,
-                         reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                         reply_markup=back_ikb)
         except Exception:
             pass
 
@@ -2503,6 +2493,35 @@ def handle_callback_query(update):
                 return
             if action == 'buyers':
                 _export_buyers_report_inline(chat_id)
+                return
+            if action == 'broadcast_confirm':
+                sess = user_sessions.get(user_id, {})
+                if not sess or sess.get('state') != 'broadcast_confirm':
+                    return
+                source_message_id = sess.get('broadcast_message_id')
+                broadcast_chat_id = sess.get('broadcast_chat_id', chat_id)
+                use_copy = sess.get('broadcast_use_copy', True)
+                with _data_lock:
+                    if user_id in user_sessions:
+                        del user_sessions[user_id]
+                save_sessions_async()
+                confirm_msg_id = callback_query['message']['message_id']
+                _tg_api('editMessageText', chat_id=chat_id, message_id=confirm_msg_id,
+                        text="📢 <b>ចាប់ផ្តើមផ្សាយ...</b>", parse_mode='HTML',
+                        reply_markup={'inline_keyboard': []})
+                _run_background("broadcast", _run_broadcast, broadcast_chat_id, source_message_id, use_copy)
+                return
+            if action == 'broadcast_cancel':
+                sess = user_sessions.get(user_id, {})
+                if sess and sess.get('state') == 'broadcast_confirm':
+                    with _data_lock:
+                        if user_id in user_sessions:
+                            del user_sessions[user_id]
+                    save_sessions_async()
+                confirm_msg_id = callback_query['message']['message_id']
+                delete_message_async(chat_id, confirm_msg_id)
+                _settings_edit(chat_id, user_id, "🚫 <b>បានបោះបង់ការផ្សាយ</b>",
+                               {'inline_keyboard': [[{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}]]})
                 return
             return
 
@@ -3762,57 +3781,6 @@ def handle_message(update):
                 if _handle_admin_settings_input(chat_id, user_id, message_id, _key, text):
                     return
 
-            if _state == 'delete_type_select':
-                stripped   = text.strip()
-                labels     = user_sessions[user_id].get('labels', {}) or {}
-                type_name  = labels.get(stripped)
-                if type_name and type_name in accounts_data.get('account_types', {}):
-                    count = len(accounts_data['account_types'].get(type_name, []))
-                    price = accounts_data.get('prices', {}).get(type_name, 0)
-                    with _data_lock:
-                        user_sessions[user_id] = {'state': 'delete_type_confirm', 'type_name': type_name}
-                    save_sessions_async()
-                    confirm_kb = {
-                        'keyboard': [[{'text': BTN_DELETE_CONFIRM}], [{'text': BTN_DELETE_CANCEL}]],
-                        'resize_keyboard': True, 'is_persistent': True,
-                    }
-                    send_message(chat_id,
-                        f"⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ Account នេះមែនទេ?</b>\n\n"
-                        f"<blockquote>🔹 ប្រភេទ: {html.escape(type_name)}\n🔹 ចំនួន Account: {count}\n🔹 តម្លៃ: ${price}</blockquote>\n\n"
-                        f"Account ទាំងអស់ក្នុងប្រភេទនេះនឹងត្រូវបានលុបចោលជាអចិន្ត្រៃយ៍!",
-                        parse_mode="HTML", reply_to_message_id=False, reply_markup=confirm_kb)
-                    return
-
-            if _state == 'delete_type_confirm':
-                stripped  = text.strip()
-                type_name = user_sessions[user_id].get('type_name')
-                if stripped == BTN_DELETE_CONFIRM:
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    if not type_name or type_name not in accounts_data.get('account_types', {}):
-                        send_message(chat_id, "⚠️ <b>ប្រភេទនេះមិនមានទៀតហើយ!</b>",
-                                     parse_mode="HTML", reply_to_message_id=False,
-                                     reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                        return
-                    count = len(accounts_data['account_types'].pop(type_name, []))
-                    accounts_data.get('prices', {}).pop(type_name, None)
-                    accounts_data['accounts'] = [a for a in accounts_data.get('accounts', []) if a.get('type') != type_name]
-                    save_data()
-                    send_message(chat_id,
-                        f"✅ <b>បានលុបប្រភេទ Account <code>{html.escape(type_name)}</code> ចំនួន {count} records ដោយជោគជ័យ!</b>",
-                        parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    return
-                if stripped == BTN_DELETE_CANCEL:
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    send_message(chat_id, "🚫 <b>បានបោះបង់ការលុបប្រភេទ Account</b>",
-                                 parse_mode="HTML", reply_to_message_id=False,
-                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    return
 
 
         if user_id in user_sessions:
@@ -3978,29 +3946,6 @@ def handle_message(update):
                     send_account_selection_inline(chat_id)
                     return
 
-            # Admin broadcast confirm/cancel flow
-            elif session.get('state') == 'broadcast_confirm' and is_admin(user_id):
-                stripped = text.strip()
-                if stripped == BTN_BROADCAST_CONFIRM:
-                    source_message_id  = session.get('broadcast_message_id')
-                    broadcast_chat_id  = session.get('broadcast_chat_id', chat_id)
-                    use_copy           = session.get('broadcast_use_copy', True)
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    send_message(chat_id, "📢 <b>ចាប់ផ្តើមផ្សាយ...</b>", parse_mode="HTML",
-                                 reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    _run_background("broadcast", _run_broadcast, broadcast_chat_id, source_message_id, use_copy)
-                    return
-                if stripped == BTN_BROADCAST_CANCEL:
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    send_message(chat_id, "🚫 <b>បានបោះបង់ការផ្សាយ</b>", parse_mode="HTML",
-                                 reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    return
 
         if not is_admin(user_id):
             existing = user_sessions.get(user_id)
