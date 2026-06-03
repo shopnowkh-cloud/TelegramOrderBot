@@ -1256,7 +1256,7 @@ BTN_DELETE_CONFIRM  = '✅ បញ្ជាក់លុប'
 BTN_DELETE_CANCEL   = '🚫 បោះបង់ការលុប'
 BTN_BROADCAST_CONFIRM = '✅ បញ្ជាក់ផ្សាយ'
 BTN_BROADCAST_CANCEL  = '🚫 បោះបង់ការផ្សាយ'
-BTN_CLONE_BOT         = '🌟 បង្កើតសំឡេង Ai'
+BTN_CLONE_BOT         = 'បង្កើតសំឡេង Ai'
 BTN_CLONE_START       = '▶️ ចាប់ផ្តើម Clone Bot'
 BTN_CLONE_STOP        = '⏹ បញ្ឈប់ Clone Bot'
 BTN_CLONE_SET_TOKEN   = '🔑 កំណត់ Token'
@@ -1276,7 +1276,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_ADD_ACCOUNT}, {'text': BTN_DELETE_TYPE}],
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
-        [{'text': BTN_MAINTENANCE}, {'text': BTN_CLONE_BOT, 'entities': [{'type': 'custom_emoji', 'offset': 0, 'length': 2, 'custom_emoji_id': '6125301608151523076'}]}],
+        [{'text': BTN_MAINTENANCE}, {'text': BTN_CLONE_BOT, 'icon_custom_emoji_id': '6125301608151523076'}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
