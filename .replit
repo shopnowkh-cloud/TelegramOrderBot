@@ -25,7 +25,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python telegram_bot_simple.py"
+args = "python bot.py"
 
 [agent]
 expertMode = true

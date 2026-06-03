@@ -12,7 +12,7 @@ Preferred communication style: Simple, everyday language.
 
 The application follows a simple HTTP-based architecture:
 
-- **Main Bot Logic**: `telegram_bot_simple.py` contains the core bot functionality using direct API calls
+- **Main Bot Logic**: `bot.py` contains the core bot functionality using direct API calls
 - **Configuration Management**: Configuration is embedded in the main file for simplicity
 - **Logging Strategy**: File-based and console logging with UTF-8 support for Khmer text
 - **API Integration**: Uses `requests` library for direct HTTP communication with Telegram Bot API
