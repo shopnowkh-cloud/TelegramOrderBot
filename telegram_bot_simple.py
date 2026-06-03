@@ -2294,6 +2294,11 @@ def handle_callback_query(update):
             _show_clone_bot_menu(chat_id)
             return
 
+        elif callback_data == 'clone_feat_translate' and is_admin(user_id):
+            answer_callback(callback_query['id'])
+            _show_translate_menu(chat_id, user_id)
+            return
+
         elif callback_data == 'cbm_list' and is_admin(user_id):
             answer_callback(callback_query['id'])
             _show_clone_bots_list(chat_id)
@@ -3040,7 +3045,7 @@ def _show_clone_bot_menu(chat_id):
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
 def _show_clone_main_menu(chat_id):
-    """Show the top-level Clone Bot menu with two feature inline buttons."""
+    """Show the top-level Clone Bot menu with three feature inline buttons."""
     with _clone_bots_lock:
         count = len(_clone_bots_list)
     active_bots = sum(1 for b in _clone_bots_list if b.get('thread') and b['thread'].is_alive())
@@ -3055,11 +3060,13 @@ def _show_clone_main_menu(chat_id):
         "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
         "ជ្រើសរើសមុខងារដែលចង់ប្រើ:\n\n"
         f"  🤖 <b>Clone Bot</b> — {clone_status}\n"
-        f"  🎙 <b>បង្កើតសំឡេង Ai</b> — {voice_status}"
+        f"  🎙 <b>បង្កើតសំឡេង Ai</b> — {voice_status}\n"
+        f"  🌐 <b>បកប្រែភាសា</b>"
     )
     kb = {'inline_keyboard': [
         [{'text': f"🤖 Clone Bot  ({clone_status})", 'callback_data': 'clone_feat_bots'}],
         [{'text': f"🎙 បង្កើតសំឡេង Ai  ({voice_status})", 'callback_data': 'clone_feat_voice'}],
+        [{'text': "🌐 បកប្រែភាសា", 'callback_data': 'clone_feat_translate'}],
     ]}
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
