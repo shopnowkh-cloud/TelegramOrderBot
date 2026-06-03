@@ -3002,14 +3002,28 @@ def _clone_bot_loop_v2(token, stop_event):
     base_url = f"https://api.telegram.org/bot{token}/"
     offset   = None
     logger.info(f"Clone Bot [{token[:10]}...] started")
-    # ── Kick out any stale long-poll from a previous session ──────────────────
-    try:
-        http.get(f"{base_url}getUpdates",
-                 params={'timeout': 0, 'allowed_updates': ['message', 'callback_query']},
-                 timeout=10)
-    except Exception:
-        pass
+    def _steal_polling():
+        """deleteWebhook + immediate getUpdates(timeout=0) to kick any other poller."""
+        try:
+            http.post(f"{base_url}deleteWebhook",
+                      json={'drop_pending_updates': True}, timeout=10)
+        except Exception:
+            pass
+        try:
+            http.get(f"{base_url}getUpdates",
+                     params={'timeout': 0, 'offset': -1,
+                             'allowed_updates': ['message', 'callback_query']},
+                     timeout=10)
+        except Exception:
+            pass
+
+    # ── Steal polling slot from any other running instance ────────────────────
+    _steal_polling()
+    stop_event.wait(2)
+    if stop_event.is_set():
+        return
     # ─────────────────────────────────────────────────────────────────────────
+    _conflict_count = 0
     while not stop_event.is_set():
         try:
             params = {'timeout': 10, 'allowed_updates': ['message', 'callback_query']}
@@ -3018,13 +3032,23 @@ def _clone_bot_loop_v2(token, stop_event):
             resp = http.get(f"{base_url}getUpdates", params=params, timeout=15)
             data = resp.json()
             if data.get('ok'):
+                _conflict_count = 0
                 for upd in data.get('result', []):
                     offset = upd['update_id'] + 1
                     worker_pool.submit(_clone_handle_update, base_url, upd)
             else:
                 desc = data.get('description', '')
                 logger.warning(f"Clone Bot [{token[:10]}...]: {desc}")
-                stop_event.wait(5)
+                if 'Conflict' in desc:
+                    _conflict_count += 1
+                    wait = min(5 * _conflict_count, 30)
+                    logger.info(f"Clone Bot [{token[:10]}...]: re-stealing polling (attempt {_conflict_count})")
+                    stop_event.wait(wait)
+                    if not stop_event.is_set():
+                        _steal_polling()
+                        stop_event.wait(2)
+                else:
+                    stop_event.wait(5)
         except Exception as e:
             if not stop_event.is_set():
                 logger.error(f"Clone Bot [{token[:10]}...] error: {e}")
