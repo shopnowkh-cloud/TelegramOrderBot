@@ -2839,19 +2839,21 @@ def _clone_handle_update(base_url, update):
             lang_name = TRANSLATE_LANGUAGES.get(lang_code, lang_code)
             _clone_bot_prefs.setdefault(user_id, {})['translate_lang'] = lang_code
             _clone_bot_prefs[user_id]['translate_name'] = lang_name
+            _clone_bot_prefs[user_id]['clone_mode'] = 'translate'
             if msg_id:
                 _clone_api(base_url, 'deleteMessage', chat_id=chat_id, message_id=msg_id)
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-                text=f"✅ <b>ភាសាបកប្រែ៖ {lang_name}</b>\n\n"
-                     f"💬 សូមផ្ញើអក្សរ — ខ្ញុំនឹង<i>បកប្រែ</i> + <i>បំប្លែងជាសំឡេង</i> ដោយស្វ័យប្រវត្តិ។",
+                text=f"✅ <b>Mode: បកប្រែភាសា → {lang_name}</b>\n\n"
+                     f"💬 សូមផ្ញើអក្សរ — ខ្ញុំនឹង<i>បកប្រែ</i>ជា {lang_name} ដោយស្វ័យប្រវត្តិ។",
                 parse_mode="HTML")
         elif data == 'cln_tr_off':
             _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
             _clone_bot_prefs[user_id].pop('translate_name', None)
+            _clone_bot_prefs[user_id]['clone_mode'] = 'voice'
             if msg_id:
                 _clone_api(base_url, 'deleteMessage', chat_id=chat_id, message_id=msg_id)
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-                       text="🔇 <b>បានបិទបកប្រែ</b> — ត្រឡប់ទៅ Text to Voice ធម្មតា។",
+                       text="🎙 <b>ប្តូរទៅ Mode: TTS</b> — សរសេរអក្សរ → ខ្ញុំបំប្លែងជាសំឡេង។",
                        parse_mode="HTML")
         elif data == 'cln_tr_menu':
             rows = []
@@ -2877,32 +2879,51 @@ def _clone_handle_update(base_url, update):
     if not text or not user_id:
         return
 
+    _CLONE_START_KB = {
+        'keyboard': [
+            [{'text': '🎙 TTS — បំប្លែងជាសំឡេង'}],
+            [{'text': '🌐 បកប្រែភាសា'}],
+        ],
+        'resize_keyboard': True,
+        'is_persistent': True,
+    }
+
     if text.startswith('/start'):
-        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
-        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_name', None)
-        bot_cfg      = _get_clone_bot_by_base_url(base_url)
-        default_lang = bot_cfg.get('default_lang')
-        if default_lang:
-            _clone_bot_prefs[user_id]['translate_lang'] = default_lang
-            _clone_bot_prefs[user_id]['translate_name'] = bot_cfg.get('default_lang_name', default_lang)
+        _clone_bot_prefs.setdefault(user_id, {})
+        _clone_bot_prefs[user_id].pop('translate_lang', None)
+        _clone_bot_prefs[user_id].pop('translate_name', None)
+        _clone_bot_prefs[user_id]['clone_mode'] = 'voice'
         _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-            text='<tg-emoji emoji-id="5798587088077066898">👋</tg-emoji> <b>សួស្តី</b> Sovannrady\n\n'
-                 '<b>ខ្ញុំជា Text to voice bot</b>\n\n'
-                 '<tg-emoji emoji-id="5471978009449731768">👉</tg-emoji>'
-                 '<i>គ្រាន់តែ សរសេរអក្សរណាមួយ ហើយ ខ្ញុំនឹងបំប្លែងជាសំឡេងដោយស្វ័យប្រវត្តិ។</i> '
-                 '<tg-emoji emoji-id="5199885118214436622">🔥</tg-emoji>',
+            text='<tg-emoji emoji-id="5798587088077066898">👋</tg-emoji> <b>សួស្តី!</b>\n\n'
+                 '🎙 <b>TTS</b> — សរសេរអក្សរ → បំប្លែងជាសំឡេង\n'
+                 '🌐 <b>បកប្រែភាសា</b> — សរសេរអក្សរ → បកប្រែ (អក្សរ)\n\n'
+                 '<i>ជ្រើសរើសមុខងារពី menu ខាងក្រោម</i> 👇',
             parse_mode="HTML",
-            reply_markup={'keyboard': [[{'text': '🌐 បកប្រែភាសា'}]],
-                          'resize_keyboard': True, 'is_persistent': True})
+            reply_markup=_CLONE_START_KB)
         return
 
+    # ── Mode: TTS only ────────────────────────────────────────────────────────
+    if text == '🎙 TTS — បំប្លែងជាសំឡេង':
+        _clone_bot_prefs.setdefault(user_id, {})
+        _clone_bot_prefs[user_id]['clone_mode'] = 'voice'
+        _clone_bot_prefs[user_id].pop('translate_lang', None)
+        _clone_bot_prefs[user_id].pop('translate_name', None)
+        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+            text='🎙 <b>Mode: TTS</b>\n\n'
+                 '<i>សូមសរសេរអក្សរ — ខ្ញុំនឹងបំប្លែងជាសំឡេងភ្លាមៗ។</i>',
+            parse_mode="HTML",
+            reply_markup=_CLONE_START_KB)
+        return
+
+    # ── Mode: Translate only ──────────────────────────────────────────────────
     if text == '🌐 បកប្រែភាសា':
+        _clone_bot_prefs.setdefault(user_id, {})
+        _clone_bot_prefs[user_id]['clone_mode'] = 'translate'
         items = list(TRANSLATE_LANGUAGES.items())
         rows  = []
         for i in range(0, len(items), 3):
             rows.append([{'text': name, 'callback_data': f'cln_lang_{code}'}
                          for code, name in items[i:i+3]])
-        rows.append([{'text': '🔇 បិទបកប្រែ', 'callback_data': 'cln_tr_off'}])
         _clone_api(base_url, 'sendMessage', chat_id=chat_id,
             text='🌐 <b>ជ្រើសរើសភាសាបកប្រែ</b>',
             parse_mode="HTML",
@@ -2910,32 +2931,41 @@ def _clone_handle_update(base_url, update):
         return
 
     prefs       = _clone_bot_prefs.get(user_id, {})
+    clone_mode  = prefs.get('clone_mode', 'voice')
     gender      = prefs.get('gender', 'female')
     speed       = prefs.get('speed', 'x1')
-    bot_cfg     = _get_clone_bot_by_base_url(base_url)
-    trans_lang  = prefs.get('translate_lang') or bot_cfg.get('default_lang')
-    trans_name  = (prefs.get('translate_name')
-                   or bot_cfg.get('default_lang_name')
-                   or trans_lang or '')
+    trans_lang  = prefs.get('translate_lang')
+    trans_name  = prefs.get('translate_name', trans_lang or '')
 
-    tts_text = text
-    if trans_lang:
+    # ── Translate-only mode ───────────────────────────────────────────────────
+    if clone_mode == 'translate':
+        if not trans_lang:
+            items = list(TRANSLATE_LANGUAGES.items())
+            rows  = []
+            for i in range(0, len(items), 3):
+                rows.append([{'text': name, 'callback_data': f'cln_lang_{code}'}
+                             for code, name in items[i:i+3]])
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                text='🌐 <b>សូមជ្រើសរើសភាសាជាមុនសិន</b>',
+                parse_mode="HTML",
+                reply_markup={'inline_keyboard': rows})
+            return
         _clone_api(base_url, 'sendChatAction', chat_id=chat_id, action='typing')
         translated = _translate_text(text, trans_lang)
         if translated:
-            tts_text = translated
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
                 text=f"🌐 <b>{trans_name}</b>\n<blockquote>{html.escape(translated)}</blockquote>",
                 parse_mode="HTML")
         else:
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
                        text="❌ មានបញ្ហាក្នុងការបកប្រែ សូមព្យាយាមម្តងទៀត។")
-            return
+        return
 
+    # ── TTS-only mode (default) ───────────────────────────────────────────────
     _clone_api(base_url, 'sendChatAction', chat_id=chat_id, action='record_voice')
 
     try:
-        ogg_bytes = _ttv_synthesize(tts_text, gender=gender, speed=speed)
+        ogg_bytes = _ttv_synthesize(text, gender=gender, speed=speed)
         if ogg_bytes:
             cur_idx    = _TTV_SPEED_KEYS.index(speed) if speed in _TTV_SPEED_KEYS else 1
             next_speed = _TTV_SPEED_KEYS[(cur_idx + 1) % len(_TTV_SPEED_KEYS)]
@@ -2944,8 +2974,6 @@ def _clone_handle_update(base_url, update):
                  'callback_data': f"ttv_gender:{'male' if gender == 'female' else 'female'}"},
                 {'text': f"⚡ {next_speed}", 'callback_data': f"ttv_speed:{next_speed}"},
             ]
-            if trans_lang:
-                kb_row.append({'text': '🌐 ភាសា', 'callback_data': 'cln_tr_menu'})
             kb = {'inline_keyboard': [kb_row]}
             _clone_send_voice(base_url, chat_id, ogg_bytes,
                               reply_to=msg.get('message_id'), reply_markup=kb)
