@@ -20,15 +20,6 @@ from urllib.parse import quote as url_quote
 
 import requests
 from bakong_khqr import KHQR
-from pyrogram import Client, filters
-from pyrogram.types import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardRemove,
-)
-from pyrogram.enums import ParseMode
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -54,27 +45,20 @@ def is_admin(uid):
         return False
     return uid_int == ADMIN_ID or uid_int in EXTRA_ADMIN_IDS
 
-# ── Pyrogram MTProto client ───────────────────────────────────────────────────
-app = Client(
-    "bot_session",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=False,
-)
-
-# Reference to the running asyncio event loop — set inside main().
-# All sync send-wrappers use this to schedule coroutines from threads.
-_event_loop: asyncio.AbstractEventLoop | None = None
+# ── Bot API ───────────────────────────────────────────────────────────────────
+BOT_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
 
 # ── Thread pools ─────────────────────────────────────────────────────────────
 worker_pool    = ThreadPoolExecutor(max_workers=16)
 background_pool = ThreadPoolExecutor(max_workers=8)
 _data_lock     = threading.RLock()
 
-# HTTP session — only used for Neon DB and Bakong API (NOT Telegram)
+# HTTP session — used for Telegram Bot API, Neon DB, and Bakong API
 http = requests.Session()
 http.headers.update({'Connection': 'keep-alive'})
+adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
+http.mount('https://', adapter)
+http.mount('http://', adapter)
 
 # ── Bakong KHQR ───────────────────────────────────────────────────────────────
 BAKONG_TOKEN = os.environ.get("BAKONG_TOKEN", "")
@@ -82,69 +66,43 @@ khqr_client  = KHQR(BAKONG_TOKEN)
 PAYMENT_NAME = "RADY"
 MAINTENANCE_MODE = False
 
-# ── Pyrogram sync helper ──────────────────────────────────────────────────────
-def _pyro_sync(coro, timeout: float = 20, reraise: bool = False):
-    """Run a Pyrogram coroutine synchronously from any thread.
-    Returns the coroutine result, or None on error (raises if reraise=True)."""
-    if _event_loop is None or not _event_loop.is_running():
-        logger.warning("_pyro_sync called before event loop is running")
-        return None
-    future = asyncio.run_coroutine_threadsafe(coro, _event_loop)
+# ── Telegram Bot API helper ───────────────────────────────────────────────────
+def _tg_api(method, _files=None, **kwargs):
+    """Call a Telegram Bot API method. Returns the 'result' field or None."""
+    url = f"{BOT_API_URL}{method}"
     try:
-        return future.result(timeout=timeout)
+        if _files:
+            data = {}
+            for k, v in kwargs.items():
+                if v is None:
+                    continue
+                data[k] = json.dumps(v) if isinstance(v, (dict, list)) else v
+            resp = http.post(url, data=data, files=_files, timeout=30)
+        else:
+            payload = {k: v for k, v in kwargs.items() if v is not None}
+            resp = http.post(url, json=payload, timeout=20)
+        result = resp.json()
+        if result.get('ok'):
+            return result.get('result')
+        logger.warning(f"Telegram API {method} error: {result.get('description')}")
     except Exception as e:
-        if reraise:
-            raise
-        logger.error(f"_pyro_sync error: {type(e).__name__}: {e}")
-        return None
+        logger.error(f"_tg_api {method} failed: {type(e).__name__}: {e}")
+    return None
 
 # ── Keyboard converter ────────────────────────────────────────────────────────
 def _convert_keyboard(markup):
-    """Convert a Bot-API-style keyboard dict to the matching Pyrogram type.
-    Pyrogram objects are returned as-is; None / False / "no_keyboard" → None."""
+    """Pass Bot-API-style keyboard dicts through as-is for the HTTP API."""
     if markup is None or markup is False:
         return None
     if isinstance(markup, str):
-        return None  # "no_keyboard" or any unknown string
-    if isinstance(markup, (InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove)):
-        return markup  # already a Pyrogram object
-    if not isinstance(markup, dict):
         return None
-
-    if markup.get('remove_keyboard'):
-        return ReplyKeyboardRemove()
-
-    if 'inline_keyboard' in markup:
-        rows = []
-        for row in markup['inline_keyboard']:
-            btn_row = []
-            for btn in row:
-                btn_row.append(InlineKeyboardButton(
-                    btn['text'],
-                    callback_data=btn.get('callback_data', ''),
-                ))
-            rows.append(btn_row)
-        return InlineKeyboardMarkup(rows)
-
-    if 'keyboard' in markup:
-        rows = []
-        for row in markup['keyboard']:
-            btn_row = [KeyboardButton(btn['text']) for btn in row]
-            rows.append(btn_row)
-        return ReplyKeyboardMarkup(
-            rows,
-            resize_keyboard=markup.get('resize_keyboard', False),
-            one_time_keyboard=markup.get('one_time_keyboard', False),
-            is_persistent=markup.get('is_persistent', False),
-        )
-
+    if isinstance(markup, dict):
+        return markup
     return None
 
-def _pm(parse_mode: str | None) -> ParseMode | None:
-    """Convert parse_mode string to Pyrogram ParseMode enum."""
-    if not parse_mode:
-        return None
-    return ParseMode.HTML if parse_mode.upper() == 'HTML' else ParseMode.MARKDOWN
+def _pm(parse_mode: str | None) -> str | None:
+    """Return parse_mode string as-is for Bot API."""
+    return parse_mode or None
 
 # ── Manual KHQR builder (fallback) ───────────────────────────────────────────
 def _crc16_ccitt(data: str) -> str:
@@ -598,10 +556,10 @@ def delete_pending_payment_async(user_id):
 def save_purchase_history_async(user_id, account_type, quantity, total_price, accounts=None):
     _run_background("save_purchase_history", save_purchase_history, user_id, account_type, quantity, total_price, accounts)
 
-# ── Message deletion (Pyrogram-based) ────────────────────────────────────────
+# ── Message deletion ──────────────────────────────────────────────────────────
 def _delete_message_now(chat_id, message_id):
     try:
-        result = _pyro_sync(app.delete_messages(chat_id, message_id), timeout=5)
+        result = _tg_api('deleteMessage', chat_id=chat_id, message_id=message_id)
         if result is not None:
             logger.info(f"Deleted message {message_id} from chat {chat_id}")
             return True
@@ -893,20 +851,20 @@ def _is_admin_notified(uid):
         logger.error(f"Failed to check admin_notified for {uid}: {e}")
     return False
 
-# ── Fetch user info via Pyrogram ──────────────────────────────────────────────
+# ── Fetch user info via Bot API ───────────────────────────────────────────────
 def fetch_user_info(user_id):
-    """Fetch a user's profile from Telegram via Pyrogram get_chat."""
+    """Fetch a user's profile from Telegram via Bot API getChat."""
     try:
-        chat = _pyro_sync(app.get_chat(user_id), timeout=5)
-        if chat:
+        data = _tg_api('getChat', chat_id=user_id)
+        if data:
             return {
-                'id': chat.id,
-                'first_name': chat.first_name or '',
-                'last_name': chat.last_name or '',
-                'username': chat.username or '',
+                'id': data.get('id'),
+                'first_name': data.get('first_name') or '',
+                'last_name': data.get('last_name') or '',
+                'username': data.get('username') or '',
             }
     except Exception as e:
-        logger.error(f"get_chat failed for {user_id}: {e}")
+        logger.error(f"getChat failed for {user_id}: {e}")
     return None
 
 def backfill_known_user_profiles():
@@ -1009,7 +967,7 @@ def _short_label(text, limit=36):
     clean = " ".join(str(text).split())
     return clean if len(clean) <= limit else clean[:limit - 1] + "…"
 
-# ── Telegram send helpers (Pyrogram-based, sync wrappers) ─────────────────────
+# ── Telegram send helpers (Bot API HTTP) ──────────────────────────────────────
 def send_message(chat_id, text, reply_to_message_id=None, parse_mode=None,
                  reply_markup=None, message_effect_id=None):
     effective_reply_to = _get_reply_to_id() if reply_to_message_id is None else reply_to_message_id
@@ -1022,50 +980,51 @@ def send_message(chat_id, text, reply_to_message_id=None, parse_mode=None,
         effective_markup = reply_markup if (reply_markup is not None and reply_markup is not False) else MAIN_REPLY_KEYBOARD
         kb = _convert_keyboard(effective_markup)
 
-    kwargs = {}
+    params = {'chat_id': chat_id, 'text': text}
     if effective_reply_to:
-        kwargs['reply_to_message_id'] = int(effective_reply_to)
+        params['reply_to_message_id'] = int(effective_reply_to)
     if parse_mode:
-        kwargs['parse_mode'] = _pm(parse_mode)
+        params['parse_mode'] = parse_mode
     if kb is not None:
-        kwargs['reply_markup'] = kb
+        params['reply_markup'] = kb
 
     try:
-        result = _pyro_sync(app.send_message(chat_id, text, **kwargs))
+        result = _tg_api('sendMessage', **params)
         if result:
-            return {'ok': True, 'result': {'message_id': result.id}}
+            return {'ok': True, 'result': result}
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
     return None
 
 def send_sticker(chat_id, sticker_id, reply_markup=None):
+    params = {'chat_id': chat_id, 'sticker': sticker_id}
     kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
-    kwargs = {}
     if kb is not None:
-        kwargs['reply_markup'] = kb
+        params['reply_markup'] = kb
     try:
-        result = _pyro_sync(app.send_sticker(chat_id, sticker_id, **kwargs))
+        result = _tg_api('sendSticker', **params)
         if result:
-            return {'ok': True, 'result': {'message_id': result.id}}
+            return {'ok': True, 'result': result}
     except Exception as e:
         logger.error(f"Failed to send sticker: {e}")
     return None
 
 def send_photo(chat_id, photo_path, caption=None, parse_mode=None,
                reply_markup=None, message_effect_id=None):
-    kwargs = {}
+    params = {'chat_id': chat_id, 'photo': photo_path}
     if caption:
-        kwargs['caption'] = caption
+        params['caption'] = caption
     if parse_mode:
-        kwargs['parse_mode'] = _pm(parse_mode)
+        params['parse_mode'] = parse_mode
     kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
     if kb is not None:
-        kwargs['reply_markup'] = kb
+        params['reply_markup'] = kb
     try:
-        result = _pyro_sync(app.send_photo(chat_id, photo_path, **kwargs))
+        result = _tg_api('sendPhoto', **params)
         if result:
-            return {'ok': True, 'result': {'message_id': result.id,
-                                            'photo': [{'file_id': result.photo.file_id}] if result.photo else []}}
+            photos = result.get('photo', [])
+            return {'ok': True, 'result': {'message_id': result.get('message_id'),
+                                            'photo': photos}}
     except Exception as e:
         logger.error(f"Failed to send photo: {e}")
     return None
@@ -1073,94 +1032,85 @@ def send_photo(chat_id, photo_path, caption=None, parse_mode=None,
 def send_photo_bytes(chat_id, photo_bytes, caption=None, parse_mode=None, reply_markup=None):
     buf = io.BytesIO(photo_bytes)
     buf.name = "photo.png"
-    kwargs = {}
+    params = {'chat_id': chat_id}
     if caption:
-        kwargs['caption'] = caption
+        params['caption'] = caption
     if parse_mode:
-        kwargs['parse_mode'] = _pm(parse_mode)
+        params['parse_mode'] = parse_mode
     kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
     if kb is not None:
-        kwargs['reply_markup'] = kb
+        params['reply_markup'] = kb
     try:
-        result = _pyro_sync(app.send_photo(chat_id, buf, **kwargs), timeout=20)
+        result = _tg_api('sendPhoto', _files={'photo': buf}, **params)
         if result:
-            return {'ok': True, 'result': {'message_id': result.id}}
+            return {'ok': True, 'result': result}
     except Exception as e:
         logger.error(f"Failed to send photo bytes: {e}")
     return None
 
 def send_photo_url(chat_id, photo_url, caption=None, parse_mode=None, reply_markup=None):
-    kwargs = {}
-    if caption:
-        kwargs['caption'] = caption
-    if parse_mode:
-        kwargs['parse_mode'] = _pm(parse_mode)
-    kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
-    if kb is not None:
-        kwargs['reply_markup'] = kb
-    try:
-        result = _pyro_sync(app.send_photo(chat_id, photo_url, **kwargs))
-        if result:
-            return {'ok': True, 'result': {'message_id': result.id}}
-    except Exception as e:
-        logger.error(f"Failed to send photo URL: {e}")
-    return None
+    return send_photo(chat_id, photo_url, caption=caption, parse_mode=parse_mode,
+                      reply_markup=reply_markup)
 
 def send_start_banner(chat_id, caption=None, parse_mode=None,
                       message_effect_id=None, reply_markup=None):
     global START_BANNER_FILE_ID
-    kwargs = {}
+    params = {'chat_id': chat_id}
     if caption:
-        kwargs['caption'] = caption
+        params['caption'] = caption
     if parse_mode:
-        kwargs['parse_mode'] = _pm(parse_mode)
+        params['parse_mode'] = parse_mode
     kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
     if kb is not None:
-        kwargs['reply_markup'] = kb
+        params['reply_markup'] = kb
 
     if START_BANNER_FILE_ID:
         try:
-            result = _pyro_sync(app.send_photo(chat_id, START_BANNER_FILE_ID, **kwargs), timeout=8)
+            result = _tg_api('sendPhoto', photo=START_BANNER_FILE_ID, **params)
             if result:
-                return {'ok': True, 'result': {'message_id': result.id}}
+                return {'ok': True, 'result': result}
         except Exception as e:
             logger.warning(f"Cached start banner failed, uploading again: {e}")
             START_BANNER_FILE_ID = ""
 
     try:
-        result = _pyro_sync(app.send_photo(chat_id, 'start_banner.jpg', **kwargs), timeout=15)
+        with open('start_banner.jpg', 'rb') as f:
+            result = _tg_api('sendPhoto', _files={'photo': f}, **params)
         if result:
-            if result.photo:
-                new_id = result.photo.file_id
+            photos = result.get('photo', [])
+            if photos:
+                new_id = photos[-1].get('file_id', '')
                 if new_id and new_id != START_BANNER_FILE_ID:
                     START_BANNER_FILE_ID = new_id
                     _run_background("save_banner_file_id", set_setting, 'START_BANNER_FILE_ID', new_id)
-            return {'ok': True, 'result': {'message_id': result.id}}
+            return {'ok': True, 'result': result}
+    except FileNotFoundError:
+        logger.error("start_banner.jpg not found")
     except Exception as e:
         logger.error(f"Failed to send start banner: {e}")
     return None
 
 def answer_callback(callback_query_id, text=None, show_alert=False):
-    kwargs = {}
+    params = {'callback_query_id': callback_query_id}
     if text:
-        kwargs['text'] = text
+        params['text'] = text
     if show_alert:
-        kwargs['show_alert'] = True
+        params['show_alert'] = True
     try:
-        _pyro_sync(app.answer_callback_query(callback_query_id, **kwargs), timeout=5)
+        _tg_api('answerCallbackQuery', **params)
     except Exception as e:
         logger.warning(f"Failed to answer callback quickly: {e}")
 
 def copy_message(chat_id, from_chat_id, message_id, reply_markup=None):
-    kwargs = {}
+    params = {'chat_id': chat_id, 'from_chat_id': from_chat_id, 'message_id': message_id}
     if reply_markup:
         kb = _convert_keyboard(reply_markup)
         if kb is not None:
-            kwargs['reply_markup'] = kb
+            params['reply_markup'] = kb
     try:
-        result = _pyro_sync(app.copy_message(chat_id, from_chat_id, message_id, **kwargs))
+        result = _tg_api('copyMessage', **params)
         if result:
-            return {'ok': True, 'result': {'message_id': result.id}}
+            return {'ok': True, 'result': result}
     except Exception as e:
         logger.error(f"Failed to copy message: {e}")
     return None
@@ -1169,11 +1119,11 @@ def _send_document_bytes(chat_id, content_bytes, filename, caption=None):
     """Send a document from raw bytes."""
     buf = io.BytesIO(content_bytes)
     buf.name = filename
+    params = {'chat_id': chat_id}
+    if caption:
+        params['caption'] = caption
     try:
-        result = _pyro_sync(
-            app.send_document(chat_id, buf, caption=caption),
-            timeout=30
-        )
+        result = _tg_api('sendDocument', _files={'document': (filename, buf)}, **params)
         return result
     except Exception as e:
         logger.error(f"Failed to send document: {e}")
@@ -2788,105 +2738,39 @@ def handle_message(update):
     except Exception as e:
         logger.error(f"Error handling message: {e}")
 
-# ── Pyrogram update converters ────────────────────────────────────────────────
-def _chat_type_str(chat_type) -> str:
-    return str(chat_type).split('.')[-1].lower()
-
-def _pyro_user_dict(user_obj) -> dict:
-    if not user_obj:
-        return {}
-    return {
-        'id':         user_obj.id,
-        'first_name': user_obj.first_name or '',
-        'last_name':  user_obj.last_name or '',
-        'username':   user_obj.username or '',
-        'is_bot':     getattr(user_obj, 'is_bot', False) or False,
+# ── Bot API long-polling loop ─────────────────────────────────────────────────
+def _get_updates(offset=None, timeout=30):
+    params = {
+        'timeout': timeout,
+        'allowed_updates': ['message', 'callback_query', 'channel_post'],
     }
-
-def _pyro_msg_to_update(message) -> dict:
-    msg = {
-        'message_id': message.id,
-        'from':       _pyro_user_dict(message.from_user),
-        'chat':       {'id': message.chat.id, 'type': _chat_type_str(message.chat.type)},
-        'date':       int(message.date.timestamp()) if message.date else 0,
-    }
-    if message.text:
-        msg['text'] = message.text
-    if message.caption:
-        msg['caption'] = message.caption
-    return {'update_id': 0, 'message': msg}
-
-def _pyro_channel_to_update(message) -> dict:
-    msg = {
-        'message_id': message.id,
-        'chat':       {'id': message.chat.id, 'type': 'channel'},
-        'date':       int(message.date.timestamp()) if message.date else 0,
-    }
-    if message.text:
-        msg['text'] = message.text
-    if message.caption:
-        msg['caption'] = message.caption
-    return {'update_id': 0, 'channel_post': msg}
-
-def _pyro_callback_to_update(callback) -> dict:
-    msg = {}
-    if callback.message:
-        msg = {
-            'message_id': callback.message.id,
-            'chat':       {'id': callback.message.chat.id},
-        }
-    return {
-        'update_id': 0,
-        'callback_query': {
-            'id':      callback.id,
-            'from':    _pyro_user_dict(callback.from_user),
-            'message': msg,
-            'data':    callback.data or '',
-        }
-    }
-
-# ── Pyrogram event handlers ───────────────────────────────────────────────────
-@app.on_message(filters.channel)
-async def _on_channel_post(client, message):
-    update = _pyro_channel_to_update(message)
-    worker_pool.submit(handle_message, update)
-
-@app.on_callback_query()
-async def _on_callback_query(client, callback_query):
-    update = _pyro_callback_to_update(callback_query)
-    worker_pool.submit(handle_message, update)
-
-@app.on_message(~filters.channel)
-async def _on_message(client, message):
-    update = _pyro_msg_to_update(message)
-    worker_pool.submit(handle_message, update)
-
-# ── Health-check HTTP server (for Render / monitoring) ────────────────────────
-def _start_health_server():
-    import http.server
-    port = int(os.environ.get("PORT", 10000))
-    class _Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(b"OK")
-        def do_HEAD(self):
-            self.send_response(200)
-            self.end_headers()
-        def log_message(self, *args):
-            pass
+    if offset is not None:
+        params['offset'] = offset
     try:
-        with http.server.HTTPServer(("0.0.0.0", port), _Handler) as srv:
-            logger.info(f"Health-check server listening on port {port}")
-            srv.serve_forever()
+        resp = http.get(f"{BOT_API_URL}getUpdates", params=params, timeout=timeout + 10)
+        data = resp.json()
+        if data.get('ok'):
+            return data.get('result', [])
+        logger.warning(f"getUpdates error: {data.get('description')}")
     except Exception as e:
-        logger.warning(f"Health-check server error: {e}")
+        logger.error(f"getUpdates failed: {type(e).__name__}: {e}")
+    return []
+
+def _polling_loop():
+    offset = None
+    logger.info("Bot API long-polling started. Waiting for updates...")
+    while True:
+        try:
+            updates = _get_updates(offset=offset)
+            for update in updates:
+                offset = update['update_id'] + 1
+                worker_pool.submit(handle_message, update)
+        except Exception as e:
+            logger.error(f"Polling loop error: {e}")
+            time.sleep(5)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    global _event_loop
-
     # Single-process lock (prevent duplicate instances)
     lock_file = open('/tmp/telegram_bot_simple.lock', 'w')
     try:
@@ -2895,12 +2779,8 @@ def main():
         logger.error("Another bot process is already running. Exiting duplicate process.")
         return
 
-    logger.info("Starting Telegram Bot (Pyrogram MTProto)...")
+    logger.info("Starting Telegram Bot (Bot API HTTP polling)...")
     logger.info(f"Bot token configured: {BOT_TOKEN[:10]}...")
-    logger.info(f"API_ID configured: {API_ID}")
-
-    # Health-check HTTP server (Render / uptime monitors)
-    threading.Thread(target=_start_health_server, daemon=True, name="health-server").start()
 
     # Re-arm scheduled deletions from DB
     resume_scheduled_deletions()
@@ -2910,28 +2790,8 @@ def main():
     _ka_thread.start()
     logger.info("Neon keep-alive thread started (ping every 4 minutes)")
 
-    async def _run():
-        global _event_loop
-        _event_loop = asyncio.get_running_loop()
-        from pyrogram.errors import FloodWait
-        from pyrogram import idle
-        while True:
-            try:
-                logger.info("Connecting to Telegram via MTProto (Pyrogram)...")
-                await app.start()
-                me = await app.get_me()
-                logger.info(f"Bot connected via MTProto: @{me.username} ({me.first_name})")
-                logger.info("Bot is now receiving updates via Pyrogram MTProto...")
-                await idle()
-                await app.stop()
-                break
-            except FloodWait as e:
-                logger.warning(f"Flood wait: Telegram requires waiting {e.value} seconds. Sleeping...")
-                await asyncio.sleep(e.value + 5)
-                logger.info("Flood wait over, retrying connection...")
-
     try:
-        asyncio.run(_run())
+        _polling_loop()
     except KeyboardInterrupt:
         logger.info("Bot stopped by user interrupt")
     except Exception as e:
