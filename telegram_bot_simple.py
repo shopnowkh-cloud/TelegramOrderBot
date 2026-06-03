@@ -2988,12 +2988,8 @@ def _clone_bots_inline_kb():
 def _show_clone_bots_list(chat_id):
     with _clone_bots_lock:
         count = len(_clone_bots_list)
-    msg = (
-        "🤖 <b>Clone Bot — ជ្រើសរើស</b>\n\n"
-        + ("<i>ជ្រើស Bot ដែលចង់គ្រប់គ្រង:</i>"
-           if count else
-           "<i>មិនទាន់មាន Clone Bot ទេ។ ចុច ➕ ដើម្បីបន្ថែមមួយ។</i>")
-    )
+    msg = ("<i>មិនទាន់មាន Clone Bot ទេ។ ចុច ➕ ដើម្បីបន្ថែមមួយ។</i>"
+           if not count else "🤖")
     send_message(chat_id, msg, parse_mode='HTML',
                  reply_to_message_id=False, reply_markup=_clone_bots_inline_kb())
 
