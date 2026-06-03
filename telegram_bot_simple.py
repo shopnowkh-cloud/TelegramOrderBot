@@ -67,10 +67,6 @@ CLONE_BOT_TOKEN = ""
 CLONE_BOT_ACTIVE = False
 _clone_bot_thread = None
 _clone_bot_prefs: dict = {}
-CLONE2_TOKEN = ""
-CLONE2_ACTIVE = False
-_clone2_thread = None
-_clone2_stop_event = None
 _clone_bots_list: list = []
 _clone_bots_lock  = threading.Lock()
 
@@ -845,13 +841,6 @@ if _saved_clone_token:
 _saved_clone_active = get_setting('CLONE_BOT_ACTIVE')
 if _saved_clone_active:
     CLONE_BOT_ACTIVE = (str(_saved_clone_active).lower() == 'true')
-_saved_clone2_token = get_setting('CLONE2_TOKEN')
-if _saved_clone2_token:
-    CLONE2_TOKEN = _saved_clone2_token
-    logger.info("Loaded CLONE2_TOKEN from DB")
-_saved_clone2_active = get_setting('CLONE2_ACTIVE')
-if _saved_clone2_active:
-    CLONE2_ACTIVE = (str(_saved_clone2_active).lower() == 'true')
 
 # ── Session / account storage ─────────────────────────────────────────────────
 user_sessions: dict = {}
@@ -1274,10 +1263,6 @@ BTN_CLONE_STOP        = '⏹ បញ្ឈប់ Clone Bot'
 BTN_CLONE_SET_TOKEN   = '🔑 កំណត់ Token'
 BTN_CLONE_TOKEN_CLEAR = '🗑 លុប Token'
 BTN_TRANSLATE         = '🌐 បកប្រែភាសា'
-BTN_CLONE2_START      = '▶️ ចាប់ផ្តើម Clone'
-BTN_CLONE2_STOP       = '⏹ បញ្ឈប់ Clone'
-BTN_CLONE2_SET_TOKEN  = '🔑 កំណត់ Token Clone'
-BTN_CLONE2_CLR_TOKEN  = '🗑 លុប Token Clone'
 
 TRANSLATE_LANGUAGES = {
     "km": "🇰🇭 ខ្មែរ",
@@ -1367,18 +1352,6 @@ CLONE_BOT_MENU_KEYBOARD_INACTIVE = {
         [{'text': BTN_BACK_SETTINGS}],
     ], 'resize_keyboard': True, 'is_persistent': True
 }
-CLONE2_KB_ACTIVE = {
-    'keyboard': [
-        [{'text': BTN_CLONE2_STOP}],
-        [{'text': BTN_CLONE2_SET_TOKEN}, {'text': BTN_CLONE2_CLR_TOKEN}],
-    ], 'resize_keyboard': True, 'is_persistent': True
-}
-CLONE2_KB_INACTIVE = {
-    'keyboard': [
-        [{'text': BTN_CLONE2_START}],
-        [{'text': BTN_CLONE2_SET_TOKEN}, {'text': BTN_CLONE2_CLR_TOKEN}],
-    ], 'resize_keyboard': True, 'is_persistent': True
-}
 TRANSLATE_SUBMENU_KEYBOARD = {
     'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
     'resize_keyboard': True, 'is_persistent': True
@@ -1422,7 +1395,6 @@ ADMIN_BUTTON_LABELS = {
     BTN_CLONE_BOT, BTN_CLONE_MENU, BTN_CLONE_START, BTN_CLONE_STOP,
     BTN_CLONE_SET_TOKEN, BTN_CLONE_TOKEN_CLEAR,
     BTN_TRANSLATE,
-    BTN_CLONE2_START, BTN_CLONE2_STOP, BTN_CLONE2_SET_TOKEN, BTN_CLONE2_CLR_TOKEN,
 }
 
 # ── Translation helpers ───────────────────────────────────────────────────────
@@ -1819,41 +1791,6 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក Clone Bot</i>",
             parse_mode="HTML", reply_to_message_id=False,
             reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE
-        )
-        return True
-
-    if key == 'clone2_token':
-        if not raw:
-            send_message(chat_id, "សូម​ផ្ញើ Token របស់ Clone Bot (ឬ​ចុច 🚫 បោះបង់)", reply_to_message_id=False)
-            return True
-        try:
-            test_resp = http.get(f"https://api.telegram.org/bot{raw}/getMe", timeout=10).json()
-            if not test_resp.get('ok'):
-                send_message(chat_id,
-                    f"❌ Token មិន​ត្រឹម​ត្រូវ: {test_resp.get('description', 'Unknown error')}",
-                    reply_to_message_id=False)
-                return True
-            bot_info = test_resp.get('result', {})
-            bot_name = bot_info.get('first_name', 'Bot')
-            bot_username = bot_info.get('username', '')
-        except Exception as e:
-            send_message(chat_id, f"❌ មិន​អាច​ភ្ជាប់ Telegram: {e}", reply_to_message_id=False)
-            return True
-        global CLONE2_TOKEN
-        CLONE2_TOKEN = raw
-        set_setting('CLONE2_TOKEN', raw)
-        delete_message_async(chat_id, message_id)
-        with _data_lock:
-            if user_id in user_sessions:
-                del user_sessions[user_id]
-        save_sessions_async()
-        send_message(
-            chat_id,
-            f"✅ <b>ស្ថាបនា Clone Bot ជោគជ័យ!</b>\n\n"
-            f"🤖 Bot: <b>{html.escape(bot_name)}</b> (@{html.escape(bot_username)})\n\n"
-            f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក Clone Bot</i>",
-            parse_mode="HTML", reply_to_message_id=False,
-            reply_markup=CLONE2_KB_INACTIVE
         )
         return True
 
@@ -2345,11 +2282,6 @@ def handle_callback_query(update):
                 send_message(chat_id, "✅ <b>Maintenance mode OFF</b> — Bot ដំណើរការធម្មតាហើយ",
                              parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
                 return
-            return
-
-        elif callback_data == 'clone_feat_bots' and is_admin(user_id):
-            answer_callback(callback_query['id'])
-            _show_clone2_menu(chat_id)
             return
 
         elif callback_data == 'clone_feat_voice' and is_admin(user_id):
@@ -3102,44 +3034,8 @@ def _show_clone_bot_menu(chat_id):
     kb = CLONE_BOT_MENU_KEYBOARD_ACTIVE if is_running else CLONE_BOT_MENU_KEYBOARD_INACTIVE
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
-def _show_clone2_menu(chat_id):
-    token_ok   = bool(CLONE2_TOKEN)
-    is_running = CLONE2_ACTIVE and _clone2_thread and _clone2_thread.is_alive()
-    token_disp = f"<code>{CLONE2_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់​កំណត់"
-    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
-    msg = (
-        f"🤖 <b>Clone Bot</b>\n\n"
-        f"🔑 Token: {token_disp}\n"
-        f"📡 ស្ថានភាព: {status}\n\n"
-        f"<i>Clone Bot ដំណើរការ AI Voice + Translation ដោយស្វ័យប្រវត្តិ</i>"
-    )
-    kb = CLONE2_KB_ACTIVE if is_running else CLONE2_KB_INACTIVE
-    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
-
-def _start_clone2(token):
-    global _clone2_thread, CLONE2_ACTIVE, _clone2_stop_event
-    _stop_clone2()
-    _clone2_stop_event = threading.Event()
-    CLONE2_ACTIVE = True
-    _clone2_thread = threading.Thread(
-        target=_clone_bot_loop_v2, args=(token, _clone2_stop_event),
-        daemon=True, name="clone2-bot"
-    )
-    _clone2_thread.start()
-    logger.info("Clone2 Bot thread started")
-
-def _stop_clone2():
-    global CLONE2_ACTIVE, _clone2_thread, _clone2_stop_event
-    CLONE2_ACTIVE = False
-    if _clone2_stop_event:
-        _clone2_stop_event.set()
-    _clone2_thread = None
-    _clone2_stop_event = None
-
 def _show_clone_main_menu(chat_id):
-    """Show the top-level Clone Bot menu: 2 features + clone bot."""
-    is_running = CLONE2_ACTIVE and _clone2_thread and _clone2_thread.is_alive()
-    clone_icon = "🟢" if is_running else "🔴"
+    """Show the top-level Clone Bot menu: 2 features."""
     msg = (
         "🤖 <b>Clone Bot — មុខងារ</b>\n\n"
         "  🎙 <b>បង្កើតសំឡេង Ai</b>\n"
@@ -3148,7 +3044,6 @@ def _show_clone_main_menu(chat_id):
     kb = {'inline_keyboard': [
         [{'text': "🎙 បង្កើតសំឡេង Ai", 'callback_data': 'clone_feat_voice'}],
         [{'text': "🌐 បកប្រែភាសា",     'callback_data': 'clone_feat_translate'}],
-        [{'text': f"{clone_icon} Clone Bot", 'callback_data': 'clone_feat_bots'}],
     ]}
     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
 
@@ -3454,38 +3349,6 @@ def handle_message(update):
                 send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ Clone Bot</b>",
                              parse_mode="HTML", reply_to_message_id=False,
                              reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
-                return
-            if btn == BTN_CLONE2_START:
-                if not CLONE2_TOKEN:
-                    send_message(chat_id, "❌ សូម​កំណត់ Token ជា​មុន​សិន",
-                                 reply_to_message_id=False, reply_markup=CLONE2_KB_INACTIVE)
-                    return
-                _start_clone2(CLONE2_TOKEN)
-                set_setting('CLONE2_ACTIVE', 'true')
-                send_message(chat_id, "🟢 <b>Clone Bot ចាប់ផ្តើម​ដំណើរការ!</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=CLONE2_KB_ACTIVE)
-                return
-            if btn == BTN_CLONE2_STOP:
-                _stop_clone2()
-                set_setting('CLONE2_ACTIVE', 'false')
-                send_message(chat_id, "🔴 <b>Clone Bot បាន​បញ្ឈប់</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=CLONE2_KB_INACTIVE)
-                return
-            if btn == BTN_CLONE2_SET_TOKEN:
-                _prompt_admin_input(chat_id, user_id, 'clone2_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b> របស់ Clone Bot\n\n"
-                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>")
-                return
-            if btn == BTN_CLONE2_CLR_TOKEN:
-                _stop_clone2()
-                CLONE2_TOKEN = ""
-                set_setting('CLONE2_TOKEN', '')
-                set_setting('CLONE2_ACTIVE', 'false')
-                send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ Clone Bot</b>",
-                             parse_mode="HTML", reply_to_message_id=False,
-                             reply_markup=CLONE2_KB_INACTIVE)
                 return
         if user_id in user_sessions:
             session = user_sessions[user_id]
