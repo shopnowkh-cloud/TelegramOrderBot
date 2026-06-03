@@ -2542,6 +2542,7 @@ def _clone_handle_update(base_url, update):
         user_id = cq['from']['id']
         data    = cq.get('data', '')
         chat_id = cq.get('message', {}).get('chat', {}).get('id', user_id)
+        msg_id  = cq.get('message', {}).get('message_id')
         _clone_api(base_url, 'answerCallbackQuery', callback_query_id=cq['id'])
         if data.startswith('ttv_gender:'):
             gender = data.split(':', 1)[1]
@@ -2554,6 +2555,38 @@ def _clone_handle_update(base_url, update):
             _clone_bot_prefs.setdefault(user_id, {})['speed'] = speed
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
                        text=f"✅ ប្តូរល្បឿនទៅ <b>{speed}</b>", parse_mode="HTML")
+        elif data.startswith('cln_lang_'):
+            lang_code = data[9:]
+            lang_name = TRANSLATE_LANGUAGES.get(lang_code, lang_code)
+            _clone_bot_prefs.setdefault(user_id, {})['translate_lang'] = lang_code
+            _clone_bot_prefs[user_id]['translate_name'] = lang_name
+            if msg_id:
+                _clone_api(base_url, 'deleteMessage', chat_id=chat_id, message_id=msg_id)
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                text=f"✅ <b>ភាសាបកប្រែ៖ {lang_name}</b>\n\n"
+                     f"💬 សូមផ្ញើអក្សរ — ខ្ញុំនឹង<i>បកប្រែ</i> + <i>បំប្លែងជាសំឡេង</i> ដោយស្វ័យប្រវត្តិ។\n"
+                     f"🔇 ផ្ញើ /notranslate ដើម្បីបិទ។",
+                parse_mode="HTML")
+        elif data == 'cln_tr_off':
+            _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
+            _clone_bot_prefs[user_id].pop('translate_name', None)
+            if msg_id:
+                _clone_api(base_url, 'deleteMessage', chat_id=chat_id, message_id=msg_id)
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                       text="🔇 <b>បានបិទបកប្រែ</b> — ត្រឡប់ទៅ Text to Voice ធម្មតា។",
+                       parse_mode="HTML")
+        elif data == 'cln_tr_menu':
+            rows = []
+            items = list(TRANSLATE_LANGUAGES.items())
+            for i in range(0, len(items), 3):
+                row = [{'text': name, 'callback_data': f'cln_lang_{code}'}
+                       for code, name in items[i:i+3]]
+                rows.append(row)
+            rows.append([{'text': '🔇 បិទបកប្រែ', 'callback_data': 'cln_tr_off'}])
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                text='🌐 <b>ជ្រើសរើសភាសាបកប្រែ</b>',
+                parse_mode="HTML",
+                reply_markup={'inline_keyboard': rows})
         return
 
     if 'message' not in update:
@@ -2567,6 +2600,8 @@ def _clone_handle_update(base_url, update):
         return
 
     if text.startswith('/start'):
+        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
+        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_name', None)
         _clone_api(base_url, 'sendMessage', chat_id=chat_id,
             text='<tg-emoji emoji-id="5798587088077066898">👋</tg-emoji> <b>សួស្តី</b> Sovannrady\n\n'
                  '<b>ខ្ញុំជា Text to voice bot</b>\n\n'
@@ -2576,23 +2611,63 @@ def _clone_handle_update(base_url, update):
             parse_mode="HTML")
         return
 
-    prefs  = _clone_bot_prefs.get(user_id, {})
-    gender = prefs.get('gender', 'female')
-    speed  = prefs.get('speed', 'x1')
+    if text.startswith('/translate'):
+        rows = []
+        items = list(TRANSLATE_LANGUAGES.items())
+        for i in range(0, len(items), 3):
+            row = [{'text': name, 'callback_data': f'cln_lang_{code}'}
+                   for code, name in items[i:i+3]]
+            rows.append(row)
+        rows.append([{'text': '🔇 បិទបកប្រែ', 'callback_data': 'cln_tr_off'}])
+        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+            text='🌐 <b>ជ្រើសរើសភាសាបកប្រែ</b>\n\nអក្សរដែលបញ្ជូននឹង<i>ត្រូវបកប្រែ</i> ហើយ<i>បំប្លែងជាសំឡេង</i>ដោយស្វ័យប្រវត្តិ។',
+            parse_mode="HTML",
+            reply_markup={'inline_keyboard': rows})
+        return
+
+    if text.startswith('/notranslate'):
+        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
+        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_name', None)
+        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                   text="🔇 <b>បានបិទបកប្រែ</b> — ត្រឡប់ទៅ Text to Voice ធម្មតា។",
+                   parse_mode="HTML")
+        return
+
+    prefs       = _clone_bot_prefs.get(user_id, {})
+    gender      = prefs.get('gender', 'female')
+    speed       = prefs.get('speed', 'x1')
+    trans_lang  = prefs.get('translate_lang')
+    trans_name  = prefs.get('translate_name', trans_lang or '')
+
+    tts_text = text
+    if trans_lang:
+        _clone_api(base_url, 'sendChatAction', chat_id=chat_id, action='typing')
+        translated = _translate_text(text, trans_lang)
+        if translated:
+            tts_text = translated
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                text=f"🌐 <b>{trans_name}</b>\n<blockquote>{html.escape(translated)}</blockquote>",
+                parse_mode="HTML")
+        else:
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                       text="❌ មានបញ្ហាក្នុងការបកប្រែ សូមព្យាយាមម្តងទៀត។")
+            return
 
     _clone_api(base_url, 'sendChatAction', chat_id=chat_id, action='record_voice')
 
     try:
-        ogg_bytes = _ttv_synthesize(text, gender=gender, speed=speed)
+        ogg_bytes = _ttv_synthesize(tts_text, gender=gender, speed=speed)
         if ogg_bytes:
             cur_idx    = _TTV_SPEED_KEYS.index(speed) if speed in _TTV_SPEED_KEYS else 1
             next_speed = _TTV_SPEED_KEYS[(cur_idx + 1) % len(_TTV_SPEED_KEYS)]
-            kb = {'inline_keyboard': [[
+            kb_row = [
                 {'text': '👨 ប្រុស' if gender == 'female' else '👩 ស្រី',
                  'callback_data': f"ttv_gender:{'male' if gender == 'female' else 'female'}"},
-                {'text': f"⚡ {next_speed}",
-                 'callback_data': f"ttv_speed:{next_speed}"},
-            ]]}
+                {'text': f"⚡ {next_speed}", 'callback_data': f"ttv_speed:{next_speed}"},
+            ]
+            if trans_lang:
+                kb_row.append({'text': '🌐 ភាសា', 'callback_data': 'cln_tr_menu'})
+            kb = {'inline_keyboard': [kb_row]}
             _clone_send_voice(base_url, chat_id, ogg_bytes,
                               reply_to=msg.get('message_id'), reply_markup=kb)
         else:
