@@ -3015,7 +3015,11 @@ def _clone_api(base_url, method, _files=None, **kwargs):
 def _clone_send_voice(base_url, chat_id, ogg_bytes, reply_to=None, reply_markup=None):
     buf = io.BytesIO(ogg_bytes)
     buf.name = 'voice.ogg'
-    params = {'chat_id': chat_id}
+    params = {
+        'chat_id': chat_id,
+        'caption': '<tg-emoji emoji-id="5294339927318739359">🎙</tg-emoji> @limsovannradybot',
+        'parse_mode': 'HTML',
+    }
     if reply_to:
         params['reply_to_message_id'] = reply_to
     if reply_markup:
