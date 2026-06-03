@@ -19,6 +19,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY telegram_bot_simple.py .
+COPY bot.py .
 
-CMD ["python", "telegram_bot_simple.py"]
+CMD ["python", "bot.py"]

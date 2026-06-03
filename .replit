@@ -33,7 +33,7 @@ stack = "BEST_EFFORT_FALLBACK"
 
 [deployment]
 deploymentTarget = "vm"
-run = ["python", "telegram_bot_simple.py"]
+run = ["python", "bot.py"]
 
 [userenv]
 
