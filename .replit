@@ -38,3 +38,7 @@ run = ["python", "telegram_bot_simple.py"]
 [userenv]
 
 [userenv.shared]
+
+[[ports]]
+localPort = 10000
+externalPort = 80
