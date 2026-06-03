@@ -65,6 +65,10 @@ BAKONG_TOKEN = os.environ.get("BAKONG_TOKEN", "")
 khqr_client  = KHQR(BAKONG_TOKEN)
 PAYMENT_NAME = "RADY"
 MAINTENANCE_MODE = False
+CLONE_BOT_TOKEN = ""
+CLONE_BOT_ACTIVE = False
+_clone_bot_thread = None
+_clone_bot_prefs: dict = {}
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
@@ -830,6 +834,13 @@ _saved_channel_id = get_setting('TELEGRAM_CHANNEL_ID')
 if _saved_channel_id:
     CHANNEL_ID = _saved_channel_id.strip()
     logger.info(f"Loaded TELEGRAM_CHANNEL_ID from DB: {CHANNEL_ID}")
+_saved_clone_token = get_setting('CLONE_BOT_TOKEN')
+if _saved_clone_token:
+    CLONE_BOT_TOKEN = _saved_clone_token
+    logger.info("Loaded CLONE_BOT_TOKEN from DB")
+_saved_clone_active = get_setting('CLONE_BOT_ACTIVE')
+if _saved_clone_active:
+    CLONE_BOT_ACTIVE = (str(_saved_clone_active).lower() == 'true')
 
 # ── Session / account storage ─────────────────────────────────────────────────
 user_sessions: dict = {}
@@ -1245,6 +1256,11 @@ BTN_DELETE_CONFIRM  = '✅ បញ្ជាក់លុប'
 BTN_DELETE_CANCEL   = '🚫 បោះបង់ការលុប'
 BTN_BROADCAST_CONFIRM = '✅ បញ្ជាក់ផ្សាយ'
 BTN_BROADCAST_CANCEL  = '🚫 បោះបង់ការផ្សាយ'
+BTN_CLONE_BOT         = '🤖 Clone Bot'
+BTN_CLONE_START       = '▶️ ចាប់ផ្តើម Clone Bot'
+BTN_CLONE_STOP        = '⏹ បញ្ឈប់ Clone Bot'
+BTN_CLONE_SET_TOKEN   = '🔑 កំណត់ Token'
+BTN_CLONE_TOKEN_CLEAR = '🗑 លុប Token'
 
 BROADCAST_CONFIRM_KEYBOARD = {
     'keyboard': [
@@ -1260,7 +1276,7 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_ADD_ACCOUNT}, {'text': BTN_DELETE_TYPE}],
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
-        [{'text': BTN_MAINTENANCE}],
+        [{'text': BTN_MAINTENANCE}, {'text': BTN_CLONE_BOT}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -1285,6 +1301,20 @@ ADMINS_SUBMENU_KEYBOARD = {
 MAINTENANCE_SUBMENU_KEYBOARD = {
     'keyboard': [[{'text': BTN_MAINT_ON}, {'text': BTN_MAINT_OFF}], [{'text': BTN_BACK_SETTINGS}]],
     'resize_keyboard': True, 'is_persistent': True
+}
+CLONE_BOT_MENU_KEYBOARD_ACTIVE = {
+    'keyboard': [
+        [{'text': BTN_CLONE_STOP}],
+        [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
+        [{'text': BTN_BACK_SETTINGS}],
+    ], 'resize_keyboard': True, 'is_persistent': True
+}
+CLONE_BOT_MENU_KEYBOARD_INACTIVE = {
+    'keyboard': [
+        [{'text': BTN_CLONE_START}],
+        [{'text': BTN_CLONE_SET_TOKEN}, {'text': BTN_CLONE_TOKEN_CLEAR}],
+        [{'text': BTN_BACK_SETTINGS}],
+    ], 'resize_keyboard': True, 'is_persistent': True
 }
 CANCEL_INPUT_KEYBOARD = {
     'keyboard': [[{'text': BTN_CANCEL_INPUT}]],
@@ -1322,6 +1352,8 @@ ADMIN_BUTTON_LABELS = {
     BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR,
     BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
     BTN_MAINT_ON, BTN_MAINT_OFF,
+    BTN_CLONE_BOT, BTN_CLONE_START, BTN_CLONE_STOP,
+    BTN_CLONE_SET_TOKEN, BTN_CLONE_TOKEN_CLEAR,
 }
 
 # ── Admin menu helpers ────────────────────────────────────────────────────────
@@ -1537,7 +1569,7 @@ def _start_add_account_flow(chat_id, user_id, message_id):
     )
 
 def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
-    global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS
+    global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, CLONE_BOT_TOKEN
 
     raw          = (text or '').strip()
     cancel_words = {'បោះបង់', '🚫 បោះបង់'}
@@ -1655,6 +1687,40 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         save_sessions_async()
         send_message(chat_id, msg, parse_mode="HTML",
                      reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+        return True
+
+    if key == 'clone_token':
+        if not raw:
+            send_message(chat_id, "សូម​ផ្ញើ Token របស់ Clone Bot (ឬ​ចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            return True
+        try:
+            test_resp = http.get(f"https://api.telegram.org/bot{raw}/getMe", timeout=10).json()
+            if not test_resp.get('ok'):
+                send_message(chat_id,
+                    f"❌ Token មិន​ត្រឹម​ត្រូវ: {test_resp.get('description', 'Unknown error')}",
+                    reply_to_message_id=False)
+                return True
+            bot_info = test_resp.get('result', {})
+            bot_name = bot_info.get('first_name', 'Bot')
+            bot_username = bot_info.get('username', '')
+        except Exception as e:
+            send_message(chat_id, f"❌ មិន​អាច​ភ្ជាប់ Telegram: {e}", reply_to_message_id=False)
+            return True
+        CLONE_BOT_TOKEN = raw
+        set_setting('CLONE_BOT_TOKEN', raw)
+        delete_message_async(chat_id, message_id)
+        with _data_lock:
+            if user_id in user_sessions:
+                del user_sessions[user_id]
+        save_sessions_async()
+        send_message(
+            chat_id,
+            f"✅ <b>ស្ថាបនា Clone Bot ជោគជ័យ!</b>\n\n"
+            f"🤖 Bot: <b>{html.escape(bot_name)}</b> (@{html.escape(bot_username)})\n\n"
+            f"<i>ឥឡូវ​ចុច ▶️ ចាប់ផ្តើម ដើម្បី​បើក Clone Bot</i>",
+            parse_mode="HTML", reply_to_message_id=False,
+            reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE
+        )
         return True
 
     if key == 'broadcast':
@@ -2227,9 +2293,285 @@ def handle_callback_query(update):
     except Exception as e:
         logger.error(f"Error handling callback query: {e}")
 
+# ── TTV (Text-to-Voice) Engine ────────────────────────────────────────────────
+import unicodedata as _ucd
+
+_TTV_MALE_VOICES = {
+    "km": "km-KH-PisethNeural",
+    "en": "en-US-AndrewMultilingualNeural",
+    "zh-CN": "zh-CN-YunyangNeural",
+    "zh-TW": "zh-TW-YunJheNeural",
+    "th": "th-TH-NiwatNeural",
+    "lo": "lo-LA-ChanthavongNeural",
+    "vi": "vi-VN-NamMinhNeural",
+    "ko": "ko-KR-HyunsuMultilingualNeural",
+    "ja": "ja-JP-KeitaNeural",
+    "fr": "fr-FR-RemyMultilingualNeural",
+    "de": "de-DE-FlorianMultilingualNeural",
+    "ru": "ru-RU-DmitryNeural",
+    "ar": "ar-SA-HamedNeural",
+    "hi": "hi-IN-MadhurNeural",
+    "pt": "pt-BR-AntonioNeural",
+    "es": "es-ES-AlvaroNeural",
+    "id": "id-ID-ArdiNeural",
+    "ms": "ms-MY-OsmanNeural",
+    "my": "my-MM-ThihaNeural",
+}
+_TTV_FEMALE_VOICES = {
+    "km": "km-KH-SreymomNeural",
+    "en": "en-US-AvaMultilingualNeural",
+    "zh-CN": "zh-CN-XiaoxiaoNeural",
+    "zh-TW": "zh-TW-HsiaoChenNeural",
+    "th": "th-TH-PremwadeeNeural",
+    "lo": "lo-LA-KeomanyNeural",
+    "vi": "vi-VN-HoaiMyNeural",
+    "ko": "ko-KR-SunHiNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "fr": "fr-FR-VivienneMultilingualNeural",
+    "de": "de-DE-SeraphinaMultilingualNeural",
+    "ru": "ru-RU-SvetlanaNeural",
+    "ar": "ar-SA-ZariyahNeural",
+    "hi": "hi-IN-SwaraNeural",
+    "pt": "pt-BR-ThalitaMultilingualNeural",
+    "es": "es-ES-XimenaNeural",
+    "id": "id-ID-GadisNeural",
+    "ms": "ms-MY-YasminNeural",
+    "my": "my-MM-NilarNeural",
+}
+_TTV_SCRIPT_MAP = [
+    (r'[\u1780-\u17FF]', 'km'),
+    (r'[\u0E00-\u0E7F]', 'th'),
+    (r'[\u0E80-\u0EFF]', 'lo'),
+    (r'[\u1000-\u109F]', 'my'),
+    (r'[\u0900-\u097F]', 'hi'),
+    (r'[\u0600-\u06FF]', 'ar'),
+    (r'[\u0400-\u04FF]', 'ru'),
+    (r'[\uAC00-\uD7FF]', 'ko'),
+    (r'[\u3040-\u30FF]', 'ja'),
+    (r'[\u4E00-\u9FFF\u3400-\u4DBF]', 'zh-CN'),
+]
+_TTV_SPEED_RATES = {"x0.5": "-50%", "x1": "+0%", "x1.5": "+50%", "x2": "+100%"}
+_TTV_SPEED_KEYS  = list(_TTV_SPEED_RATES.keys())
+
+def _ttv_detect_lang(text):
+    for pattern, lang in _TTV_SCRIPT_MAP:
+        if re.search(pattern, text):
+            return lang
+    return 'en'
+
+def _ttv_strip_unspeakable(text):
+    result = []
+    for ch in text:
+        cat = _ucd.category(ch)
+        if cat.startswith(('L', 'M', 'N', 'P', 'Z')) or ch in '\n\r\t ':
+            result.append(ch)
+    return ''.join(result)
+
+def _ttv_run_async(coro):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+def _ttv_synthesize(text, gender='female', speed='x1'):
+    """Convert text → OGG Opus bytes via edge_tts + ffmpeg."""
+    try:
+        import edge_tts
+        import imageio_ffmpeg
+    except ImportError:
+        logger.error("edge_tts / imageio_ffmpeg not installed")
+        return None
+
+    rate  = _TTV_SPEED_RATES.get(speed, '+0%')
+    lang  = _ttv_detect_lang(text)
+    vm    = _TTV_MALE_VOICES if gender == 'male' else _TTV_FEMALE_VOICES
+    voice = vm.get(lang) or vm.get('en')
+    clean = _ttv_strip_unspeakable(text).strip()
+    if not clean:
+        return None
+    FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+
+    async def _run():
+        communicate = edge_tts.Communicate(clean, voice, rate=rate, pitch="+5Hz")
+        mp3_buf = io.BytesIO()
+        async for chunk in communicate.stream():
+            if chunk['type'] == 'audio':
+                mp3_buf.write(chunk['data'])
+        mp3_data = mp3_buf.getvalue()
+        if not mp3_data:
+            return None
+        proc = await asyncio.create_subprocess_exec(
+            FFMPEG, '-y', '-f', 'mp3', '-i', 'pipe:0',
+            '-c:a', 'libopus', '-b:a', '64k', '-f', 'ogg', 'pipe:1',
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate(input=mp3_data)
+        return stdout or None
+
+    try:
+        return _ttv_run_async(_run())
+    except Exception as e:
+        logger.error(f"TTV synthesis failed: {e}")
+        return None
+
+# ── Clone Bot engine ──────────────────────────────────────────────────────────
+def _clone_api(base_url, method, _files=None, **kwargs):
+    try:
+        url = f"{base_url}{method}"
+        if _files:
+            data = {k: (json.dumps(v) if isinstance(v, (dict, list)) else v)
+                    for k, v in kwargs.items() if v is not None}
+            resp = http.post(url, data=data, files=_files, timeout=30)
+        else:
+            resp = http.post(url, json={k: v for k, v in kwargs.items() if v is not None}, timeout=15)
+        result = resp.json()
+        if result.get('ok'):
+            return result.get('result')
+        logger.debug(f"Clone API {method}: {result.get('description')}")
+    except Exception as e:
+        logger.error(f"Clone API {method} error: {e}")
+    return None
+
+def _clone_send_voice(base_url, chat_id, ogg_bytes, reply_to=None, reply_markup=None):
+    buf = io.BytesIO(ogg_bytes)
+    buf.name = 'voice.ogg'
+    params = {'chat_id': chat_id}
+    if reply_to:
+        params['reply_to_message_id'] = reply_to
+    if reply_markup:
+        params['reply_markup'] = reply_markup
+    return _clone_api(base_url, 'sendVoice', _files={'voice': buf}, **params)
+
+def _clone_handle_update(base_url, update):
+    global _clone_bot_prefs
+
+    if 'callback_query' in update:
+        cq      = update['callback_query']
+        user_id = cq['from']['id']
+        data    = cq.get('data', '')
+        chat_id = cq.get('message', {}).get('chat', {}).get('id', user_id)
+        _clone_api(base_url, 'answerCallbackQuery', callback_query_id=cq['id'])
+        if data.startswith('ttv_gender:'):
+            gender = data.split(':', 1)[1]
+            _clone_bot_prefs.setdefault(user_id, {})['gender'] = gender
+            label = "👩 ស្រី" if gender == 'female' else "👨 ប្រុស"
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                       text=f"✅ ប្តូរទៅ <b>{label}</b>", parse_mode="HTML")
+        elif data.startswith('ttv_speed:'):
+            speed = data.split(':', 1)[1]
+            _clone_bot_prefs.setdefault(user_id, {})['speed'] = speed
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                       text=f"✅ ប្តូរល្បឿនទៅ <b>{speed}</b>", parse_mode="HTML")
+        return
+
+    if 'message' not in update:
+        return
+
+    msg     = update['message']
+    user_id = msg.get('from', {}).get('id')
+    chat_id = msg.get('chat', {}).get('id')
+    text    = msg.get('text', '').strip()
+    if not text or not user_id:
+        return
+
+    if text.startswith('/start'):
+        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+            text="👋 <b>សួស្តី!</b>\n\n🤖 ខ្ញុំជា <b>Text to Voice Bot</b>\n\n"
+                 "👉 <i>គ្រាន់​តែ​សរសេរ​អក្សរ ហើយ​ខ្ញុំ​នឹង​បំប្លែង​ជា​សំឡេង​ដោយ​ស្វ័យប្រវត្តិ</i>\n\n"
+                 "🌐 <i>គាំទ្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ລາວ · မြန်မာ · 日本語 ...</i>",
+            parse_mode="HTML")
+        return
+
+    prefs  = _clone_bot_prefs.get(user_id, {})
+    gender = prefs.get('gender', 'female')
+    speed  = prefs.get('speed', 'x1')
+
+    _clone_api(base_url, 'sendChatAction', chat_id=chat_id, action='record_voice')
+
+    try:
+        ogg_bytes = _ttv_synthesize(text, gender=gender, speed=speed)
+        if ogg_bytes:
+            cur_idx    = _TTV_SPEED_KEYS.index(speed) if speed in _TTV_SPEED_KEYS else 1
+            next_speed = _TTV_SPEED_KEYS[(cur_idx + 1) % len(_TTV_SPEED_KEYS)]
+            kb = {'inline_keyboard': [[
+                {'text': '👨 ប្រុស' if gender == 'female' else '👩 ស្រី',
+                 'callback_data': f"ttv_gender:{'male' if gender == 'female' else 'female'}"},
+                {'text': f"⚡ {next_speed}",
+                 'callback_data': f"ttv_speed:{next_speed}"},
+            ]]}
+            _clone_send_voice(base_url, chat_id, ogg_bytes,
+                              reply_to=msg.get('message_id'), reply_markup=kb)
+        else:
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                       text="⚠️ មានបញ្ហាក្នុងការបង្កើតសំឡេង។ សូមព្យាយាមម្តងទៀត។")
+    except Exception as e:
+        logger.error(f"Clone bot TTV error: {e}")
+        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                   text="⚠️ មានបញ្ហាក្នុងការបង្កើតសំឡេង។")
+
+def _clone_bot_polling_loop(token):
+    base_url = f"https://api.telegram.org/bot{token}/"
+    offset   = None
+    logger.info("Clone Bot polling started")
+    while CLONE_BOT_ACTIVE:
+        try:
+            params = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
+            if offset is not None:
+                params['offset'] = offset
+            resp = http.get(f"{base_url}getUpdates", params=params, timeout=40)
+            data = resp.json()
+            if data.get('ok'):
+                for upd in data.get('result', []):
+                    offset = upd['update_id'] + 1
+                    worker_pool.submit(_clone_handle_update, base_url, upd)
+            else:
+                logger.warning(f"Clone Bot getUpdates: {data.get('description')}")
+                time.sleep(3)
+        except Exception as e:
+            if CLONE_BOT_ACTIVE:
+                logger.error(f"Clone Bot polling error: {e}")
+                time.sleep(3)
+    logger.info("Clone Bot polling stopped")
+
+def _start_clone_bot(token):
+    global _clone_bot_thread, CLONE_BOT_ACTIVE
+    _stop_clone_bot()
+    CLONE_BOT_ACTIVE = True
+    _clone_bot_thread = threading.Thread(
+        target=_clone_bot_polling_loop, args=(token,),
+        daemon=True, name="clone-bot"
+    )
+    _clone_bot_thread.start()
+    logger.info("Clone Bot thread started")
+
+def _stop_clone_bot():
+    global CLONE_BOT_ACTIVE, _clone_bot_thread
+    CLONE_BOT_ACTIVE = False
+    _clone_bot_thread = None
+
+def _show_clone_bot_menu(chat_id):
+    token_ok   = bool(CLONE_BOT_TOKEN)
+    is_running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
+    token_disp = f"<code>{CLONE_BOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់​កំណត់"
+    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
+    msg = (
+        f"🤖 <b>Clone Bot — Text to Voice</b>\n\n"
+        f"🔑 Token: {token_disp}\n"
+        f"📡 ស្ថានភាព: {status}\n\n"
+        f"<i>Clone Bot នឹង​ប្តូរ​អក្សររបស់​អ្នក​ប្រើ​ជា​សំឡេង​ដោយ​ស្វ័យប្រវត្តិ</i>\n"
+        f"<i>🌐 គាំទ្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ລາວ · မြန်မာ · 日本語 ...</i>"
+    )
+    kb = CLONE_BOT_MENU_KEYBOARD_ACTIVE if is_running else CLONE_BOT_MENU_KEYBOARD_INACTIVE
+    send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=kb)
+
 # ── Main message handler ──────────────────────────────────────────────────────
 def handle_message(update):
-    global MAINTENANCE_MODE, PAYMENT_NAME, CHANNEL_ID
+    global MAINTENANCE_MODE, PAYMENT_NAME, CHANNEL_ID, CLONE_BOT_TOKEN
     try:
         if 'callback_query' in update:
             handle_callback_query(update)
@@ -2488,6 +2830,42 @@ def handle_message(update):
                 set_setting('MAINTENANCE_MODE', 'false')
                 send_message(chat_id, "🟢 បានបើក Bot", parse_mode="HTML",
                              reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                return
+            if btn == BTN_CLONE_BOT:
+                _show_clone_bot_menu(chat_id)
+                return
+            if btn == BTN_CLONE_START:
+                if not CLONE_BOT_TOKEN:
+                    send_message(chat_id, "❌ សូម​កំណត់ Token ជា​មុន​សិន",
+                                 reply_to_message_id=False,
+                                 reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
+                    return
+                _start_clone_bot(CLONE_BOT_TOKEN)
+                set_setting('CLONE_BOT_ACTIVE', 'true')
+                send_message(chat_id, "🟢 <b>Clone Bot ចាប់ផ្តើម​ដំណើរការ!</b>",
+                             parse_mode="HTML", reply_to_message_id=False,
+                             reply_markup=CLONE_BOT_MENU_KEYBOARD_ACTIVE)
+                return
+            if btn == BTN_CLONE_STOP:
+                _stop_clone_bot()
+                set_setting('CLONE_BOT_ACTIVE', 'false')
+                send_message(chat_id, "🔴 <b>Clone Bot បាន​បញ្ឈប់</b>",
+                             parse_mode="HTML", reply_to_message_id=False,
+                             reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
+                return
+            if btn == BTN_CLONE_SET_TOKEN:
+                _prompt_admin_input(chat_id, user_id, 'clone_token',
+                    "🔑 សូម​ផ្ញើ <b>Bot Token</b> របស់ Clone Bot\n\n"
+                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>")
+                return
+            if btn == BTN_CLONE_TOKEN_CLEAR:
+                _stop_clone_bot()
+                CLONE_BOT_TOKEN = ""
+                set_setting('CLONE_BOT_TOKEN', '')
+                set_setting('CLONE_BOT_ACTIVE', 'false')
+                send_message(chat_id, "✅ <b>បាន​លុប Token ហើយ​បញ្ឈប់ Clone Bot</b>",
+                             parse_mode="HTML", reply_to_message_id=False,
+                             reply_markup=CLONE_BOT_MENU_KEYBOARD_INACTIVE)
                 return
 
         if user_id in user_sessions:
@@ -2789,6 +3167,10 @@ def main():
     _ka_thread = threading.Thread(target=_neon_keepalive, daemon=True, name="neon-keepalive")
     _ka_thread.start()
     logger.info("Neon keep-alive thread started (ping every 4 minutes)")
+
+    if CLONE_BOT_TOKEN and CLONE_BOT_ACTIVE:
+        _start_clone_bot(CLONE_BOT_TOKEN)
+        logger.info("Clone Bot resumed from previous session")
 
     try:
         _polling_loop()
