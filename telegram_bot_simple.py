@@ -31,8 +31,6 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-API_ID     = int(os.environ.get("TELEGRAM_API_ID", "0"))
-API_HASH   = os.environ.get("TELEGRAM_API_HASH", "")
 ADMIN_ID   = 5002402843
 EXTRA_ADMIN_IDS: set = set()
 CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
