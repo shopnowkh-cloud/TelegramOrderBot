@@ -1488,25 +1488,18 @@ def send_admin_settings_menu(chat_id, user_id=None):
         _admin_settings_msg[user_id] = r.get('message_id')
 
 def _prompt_admin_input(chat_id, user_id, key, prompt_text, return_menu='main'):
-    """Send a separate prompt message; cancel returns to return_menu sub-panel."""
+    """Edit the settings panel in place to show an input prompt."""
     with _data_lock:
         user_sessions[user_id] = {
             'state': f'admin_input:{key}',
             'settings_return': return_menu,
         }
     save_sessions_async()
-    r = send_message(
-        chat_id,
+    _settings_edit(
+        chat_id, user_id,
         prompt_text + "\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
-        parse_mode="HTML",
-        reply_to_message_id=False,
-        reply_markup=SETTINGS_CANCEL_IKB,
+        SETTINGS_CANCEL_IKB,
     )
-    if r and isinstance(r, dict):
-        # store the prompt msg_id so we can delete it after input
-        with _data_lock:
-            if user_id in user_sessions:
-                user_sessions[user_id]['prompt_msg_id'] = r.get('message_id')
 
 def _show_users_list_inline(chat_id):
     try:
@@ -1677,30 +1670,28 @@ def _show_maintenance_inline(chat_id, user_id=None):
     text_msg = f"🛠 <b>ស្ថានភាព Bot បច្ចុប្បន្ន៖</b> {status}"
     _settings_edit(chat_id, uid, text_msg, _build_settings_maint_ikb())
 
-def _start_add_account_flow(chat_id, user_id, message_id):
+def _start_add_account_flow(chat_id, user_id, message_id=None):
     with _data_lock:
         user_sessions[user_id] = {'state': 'waiting_for_accounts'}
     save_sessions_async()
-    send_message(
-        chat_id,
-        "*បញ្ចូល Account សម្រាប់លក់ (អ៊ីមែលម្តងមួយបន្ទាត់)៖*\n\n"
-        "```\nl1jebywyzos2@10mail.info\nabc123@gmail.com\n```",
-        reply_to_message_id=message_id, parse_mode="Markdown",
-        reply_markup=ADD_ACCOUNT_KEYBOARD
+    _settings_edit(
+        chat_id, user_id,
+        "➕ <b>បន្ថែម Account</b>\n\n"
+        "📧 ផ្ញើ Email ម្តងមួយបន្ទាត់:\n\n"
+        "<code>l1jebywyzos2@10mail.info\nabc123@gmail.com</code>\n\n"
+        "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+        SETTINGS_CANCEL_IKB,
     )
 
 def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
     global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN
 
-    raw          = (text or '').strip()
-    sess         = user_sessions.get(user_id, {})
-    return_menu  = sess.get('settings_return', 'main')
-    prompt_msg   = sess.get('prompt_msg_id')
+    raw         = (text or '').strip()
+    sess        = user_sessions.get(user_id, {})
+    return_menu = sess.get('settings_return', 'main')
 
     def _finish_input(goto='main'):
-        """Delete the prompt message and navigate settings panel."""
-        if prompt_msg:
-            delete_message_async(chat_id, prompt_msg)
+        """Clear session and navigate settings panel."""
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
@@ -1718,12 +1709,12 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
 
     if key == 'payment':
         if not raw:
-            send_message(chat_id, "សូមផ្ញើឈ្មោះ Payment ថ្មី (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                "💳 <b>ឈ្មោះ Payment</b>\n\nសូមផ្ញើឈ្មោះ Payment ថ្មី\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         PAYMENT_NAME = raw
         set_setting('PAYMENT_NAME', PAYMENT_NAME)
-        if prompt_msg:
-            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
@@ -1733,20 +1724,21 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
 
     if key == 'bakong':
         if not raw:
-            send_message(chat_id, "សូមផ្ញើ Bakong token ថ្មី (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                "🔑 <b>Bakong Token</b>\n\nសូមផ្ញើ Token ថ្មី\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         try:
             new_client = KHQR(raw)
         except Exception as e:
-            send_message(chat_id, f"❌ Token មិនត្រឹមត្រូវ៖ <code>{html.escape(str(e))}</code>",
-                         parse_mode="HTML", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                f"❌ <b>Token មិនត្រឹមត្រូវ</b>\n\n<code>{html.escape(str(e))}</code>\n\n"
+                "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", SETTINGS_CANCEL_IKB)
             return True
         BAKONG_TOKEN = raw
         khqr_client  = new_client
         set_setting('BAKONG_TOKEN', raw)
         delete_message_async(chat_id, message_id)
-        if prompt_msg and prompt_msg != message_id:
-            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
@@ -1756,25 +1748,17 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
 
     if key == 'channel':
         if not raw:
-            send_message(chat_id,
-                         "សូមផ្ញើ Channel ID ថ្មី (ឧ. <code>-1001234567890</code>) ឬ <code>off</code> ដើម្បីបិទ",
-                         parse_mode="HTML", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                "📢 <b>Channel ID</b>\n\nសូមផ្ញើ Channel ID (ឧ. <code>-1001234567890</code>)\n"
+                "ឬ <code>off</code> ដើម្បីបិទ\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         if raw.lower() in ('off', 'none', 'clear', 'delete', 'remove'):
             CHANNEL_ID = ""
             set_setting('TELEGRAM_CHANNEL_ID', '')
-            if prompt_msg:
-                delete_message_async(chat_id, prompt_msg)
-            with _data_lock:
-                if user_id in user_sessions:
-                    del user_sessions[user_id]
-            save_sessions_async()
-            _show_channel_inline(chat_id, user_id)
-            return True
-        CHANNEL_ID = raw
-        set_setting('TELEGRAM_CHANNEL_ID', raw)
-        if prompt_msg:
-            delete_message_async(chat_id, prompt_msg)
+        else:
+            CHANNEL_ID = raw
+            set_setting('TELEGRAM_CHANNEL_ID', raw)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
@@ -1787,19 +1771,20 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
         try:
             target_id = int(raw)
         except ValueError:
-            send_message(chat_id, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                "❌ <b>user_id ត្រូវតែជាលេខ</b>\n\nសូមផ្ញើ Telegram User ID\n\n"
+                "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", SETTINGS_CANCEL_IKB)
             return True
         if target_id == ADMIN_ID:
-            send_message(chat_id, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។", reply_to_message_id=False)
-            _finish_input('adm')
+            _settings_edit(chat_id, user_id,
+                "ℹ️ Admin បឋមមិនអាចកែប្រែបានទេ\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         if action == 'add':
             EXTRA_ADMIN_IDS.add(target_id)
         else:
             EXTRA_ADMIN_IDS.discard(target_id)
         set_setting('EXTRA_ADMIN_IDS', json.dumps(sorted(EXTRA_ADMIN_IDS)))
-        if prompt_msg:
-            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
@@ -1809,26 +1794,25 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
 
     if key == 'clone_token':
         if not raw:
-            send_message(chat_id, "សូម​ផ្ញើ Token របស់ TTS Bot (ឬ​ចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                "🔑 <b>TTS Bot Token</b>\n\nសូមផ្ញើ Bot Token\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         try:
             test_resp = http.get(f"https://api.telegram.org/bot{raw}/getMe", timeout=10).json()
             if not test_resp.get('ok'):
-                send_message(chat_id,
-                    f"❌ Token មិន​ត្រឹម​ត្រូវ: {test_resp.get('description', 'Unknown error')}",
-                    reply_to_message_id=False)
+                _settings_edit(chat_id, user_id,
+                    f"❌ <b>Token មិនត្រឹមត្រូវ</b>\n\n{test_resp.get('description', 'Unknown error')}\n\n"
+                    "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", SETTINGS_CANCEL_IKB)
                 return True
-            bot_info     = test_resp.get('result', {})
-            bot_name     = bot_info.get('first_name', 'Bot')
-            bot_username = bot_info.get('username', '')
         except Exception as e:
-            send_message(chat_id, f"❌ មិន​អាច​ភ្ជាប់ Telegram: {e}", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                f"❌ <b>មិនអាចភ្ជាប់ Telegram</b>\n\n{e}\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         CLONE_BOT_TOKEN = raw
         set_setting('CLONE_BOT_TOKEN', raw)
         delete_message_async(chat_id, message_id)
-        if prompt_msg and prompt_msg != message_id:
-            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
@@ -1838,26 +1822,25 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
 
     if key == 'translate_token':
         if not raw:
-            send_message(chat_id, "សូម​ផ្ញើ Token របស់ Translate Bot (ឬ​ចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                "🔑 <b>Translate Bot Token</b>\n\nសូមផ្ញើ Bot Token\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         try:
             test_resp = http.get(f"https://api.telegram.org/bot{raw}/getMe", timeout=10).json()
             if not test_resp.get('ok'):
-                send_message(chat_id,
-                    f"❌ Token មិន​ត្រឹម​ត្រូវ: {test_resp.get('description', 'Unknown error')}",
-                    reply_to_message_id=False)
+                _settings_edit(chat_id, user_id,
+                    f"❌ <b>Token មិនត្រឹមត្រូវ</b>\n\n{test_resp.get('description', 'Unknown error')}\n\n"
+                    "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", SETTINGS_CANCEL_IKB)
                 return True
-            bot_info     = test_resp.get('result', {})
-            bot_name     = bot_info.get('first_name', 'Bot')
-            bot_username = bot_info.get('username', '')
         except Exception as e:
-            send_message(chat_id, f"❌ មិន​អាច​ភ្ជាប់ Telegram: {e}", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                f"❌ <b>មិនអាចភ្ជាប់ Telegram</b>\n\n{e}\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         TRANSLATE_BOT_TOKEN = raw
         set_setting('TRANSLATE_BOT_TOKEN', raw)
         delete_message_async(chat_id, message_id)
-        if prompt_msg and prompt_msg != message_id:
-            delete_message_async(chat_id, prompt_msg)
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
@@ -1867,7 +1850,9 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
 
     if key == 'broadcast':
         if not message_id:
-            send_message(chat_id, "សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
+            _settings_edit(chat_id, user_id,
+                "📢 <b>ផ្សាយព័ត៌មាន</b>\n\nសូមផ្ញើសារដែលចង់ផ្សាយ\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
             return True
         is_text_only = bool(raw)
         with _data_lock:
@@ -1878,11 +1863,10 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                 'broadcast_use_copy': is_text_only,
             }
         save_sessions_async()
-        send_message(
-            chat_id,
-            "❓ <b>តើ​អ្នក​ប្រាកដ​ជា​ចង់​ផ្សាយ​សារ​ខាង​លើ​នេះ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់​មែន​ទេ?</b>\n\n"
-            "ចុច <b>✅ បញ្ជាក់ផ្សាយ</b> ដើម្បី​ផ្សាយ ឬ <b>🚫 បោះបង់ការផ្សាយ</b> ដើម្បី​បោះបង់។",
-            parse_mode="HTML", reply_to_message_id=False, reply_markup=BROADCAST_CONFIRM_KEYBOARD
+        _settings_edit(
+            chat_id, user_id,
+            "❓ <b>តើអ្នកប្រាកដជាចង់ផ្សាយសារខាងលើនេះទៅអ្នកប្រើប្រាស់ទាំងអស់មែនទេ?</b>",
+            BROADCAST_CONFIRM_KEYBOARD,
         )
         return True
 
@@ -2212,11 +2196,11 @@ def handle_callback_query(update):
                 {'text': '✅ បញ្ជាក់លុប', 'callback_data': confirm_cb},
                 {'text': '🚫 បោះបង់',     'callback_data': 'dtcancel'}
             ]]}
-            send_message(chat_id,
+            _settings_edit(chat_id, user_id,
                 f"⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ Account នេះមែនទេ?</b>\n\n"
-                f"<blockquote>🔹 ប្រភេទ: {type_name}\n🔹 ចំនួន Account: {count}\n🔹 តម្លៃ: ${price}</blockquote>\n\n"
-                f"Account ទាំងអស់ក្នុងប្រភេទនេះនឹងត្រូវបានលុបចោលជាអចិន្ត្រៃយ៍!",
-                parse_mode="HTML", reply_to_message_id=None, reply_markup=keyboard)
+                f"<blockquote>🔹 ប្រភេទ: {html.escape(type_name)}\n🔹 ចំនួន Account: {count}\n🔹 តម្លៃ: ${price}</blockquote>\n\n"
+                f"⚠️ Account ទាំងអស់នឹងត្រូវបានលុបចោលជាអចិន្ត្រៃយ៍!",
+                keyboard)
             return
 
         elif callback_data.startswith('dtc:') and is_admin(user_id):
@@ -2229,17 +2213,14 @@ def handle_callback_query(update):
             accounts_data.get('prices', {}).pop(type_name, None)
             accounts_data['accounts'] = [a for a in accounts_data.get('accounts', []) if a.get('type') != type_name]
             save_data()
-            delete_message_async(chat_id, callback_query['message']['message_id'])
-            send_message(chat_id,
-                f"✅ <b>បានលុបប្រភេទ Account <code>{type_name}</code> ចំនួន {count} records ដោយជោគជ័យ!</b>",
-                parse_mode="HTML", reply_to_message_id=None)
+            _settings_edit(chat_id, user_id,
+                f"✅ <b>បានលុបប្រភេទ Account <code>{html.escape(type_name)}</code> ចំនួន {count} records ដោយជោគជ័យ!</b>",
+                {'inline_keyboard': [[{'text': '↩️ ត្រឡប់', 'callback_data': 's:del_type'}]]})
             return
 
         elif callback_data == 'dtcancel' and is_admin(user_id):
             answer_callback(callback_query['id'])
-            delete_message_async(chat_id, callback_query['message']['message_id'])
-            send_message(chat_id, "🚫 <b>បានបោះបង់ការលុបប្រភេទ Account</b>",
-                         parse_mode="HTML", reply_to_message_id=None)
+            _show_delete_type_menu_inline(chat_id, user_id)
             return
 
         elif callback_data.startswith('lang_') and is_admin(user_id):
@@ -2362,12 +2343,8 @@ def handle_callback_query(update):
             action = callback_data[2:]
             answer_callback(callback_query['id'])
             if action == 'cancel_input':
-                # Delete the prompt msg and go back to last sub-menu
                 sess = user_sessions.get(user_id, {})
                 return_key = sess.get('settings_return', 'main')
-                prompt_mid = sess.get('prompt_msg_id')
-                if prompt_mid:
-                    delete_message_async(chat_id, prompt_mid)
                 with _data_lock:
                     if user_id in user_sessions:
                         del user_sessions[user_id]
@@ -2505,10 +2482,8 @@ def handle_callback_query(update):
                     if user_id in user_sessions:
                         del user_sessions[user_id]
                 save_sessions_async()
-                confirm_msg_id = callback_query['message']['message_id']
-                _tg_api('editMessageText', chat_id=chat_id, message_id=confirm_msg_id,
-                        text="📢 <b>ចាប់ផ្តើមផ្សាយ...</b>", parse_mode='HTML',
-                        reply_markup={'inline_keyboard': []})
+                _settings_edit(chat_id, user_id, "📢 <b>ចាប់ផ្តើមផ្សាយ...</b>",
+                               {'inline_keyboard': []})
                 _run_background("broadcast", _run_broadcast, broadcast_chat_id, source_message_id, use_copy)
                 return
             if action == 'broadcast_cancel':
@@ -2518,8 +2493,6 @@ def handle_callback_query(update):
                         if user_id in user_sessions:
                             del user_sessions[user_id]
                     save_sessions_async()
-                confirm_msg_id = callback_query['message']['message_id']
-                delete_message_async(chat_id, confirm_msg_id)
                 _settings_edit(chat_id, user_id, "🚫 <b>បានបោះបង់ការផ្សាយ</b>",
                                {'inline_keyboard': [[{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}]]})
                 return
@@ -3973,11 +3946,12 @@ def handle_message(update):
                                 accounts.append({'email': email})
 
                     if not accounts:
-                        send_message(chat_id,
-                            "*មិនរកឃើញអ៊ីមែលត្រឹមត្រូវ! សូមបញ្ចូលតាមទម្រង់៖*\n\n"
-                            "```\nl1jebywyzos2@10mail.info\nabc123@gmail.com\n```",
-                            reply_to_message_id=message_id, parse_mode="Markdown",
-                            reply_markup=ADD_ACCOUNT_KEYBOARD)
+                        _settings_edit(chat_id, user_id,
+                            "❌ <b>មិនរកឃើញ Email ត្រឹមត្រូវ!</b>\n\n"
+                            "📧 ផ្ញើ Email ម្តងមួយបន្ទាត់:\n\n"
+                            "<code>l1jebywyzos2@10mail.info\nabc123@gmail.com</code>\n\n"
+                            "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                            SETTINGS_CANCEL_IKB)
                         return
 
                     # Store accounts temporarily and ask for account type
@@ -3987,24 +3961,20 @@ def handle_message(update):
                             'pending_accounts': accounts
                         }
                     save_sessions_async()
-                    send_message(chat_id,
-                        f"*✅ បានទទួល {len(accounts)} Accounts*\n\nសូមបញ្ចូលប្រភេទ Account (ឧ. Facebook, TikTok):",
-                        reply_to_message_id=message_id, parse_mode="Markdown",
-                        reply_markup=ADD_ACCOUNT_KEYBOARD)
+                    _settings_edit(chat_id, user_id,
+                        f"✅ <b>បានទទួល {len(accounts)} Accounts</b>\n\n"
+                        "📂 សូមបញ្ចូលប្រភេទ Account (ឧ. Facebook, TikTok):\n\n"
+                        "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                        SETTINGS_CANCEL_IKB)
                     return
 
                 if session['state'] == 'waiting_for_account_type':
                     account_type = text.strip()
-                    if not account_type or account_type == BTN_BACK_SETTINGS:
-                        if account_type == BTN_BACK_SETTINGS:
-                            with _data_lock:
-                                if user_id in user_sessions:
-                                    del user_sessions[user_id]
-                            save_sessions_async()
-                            send_admin_settings_menu(chat_id)
-                        else:
-                            send_message(chat_id, "សូមបញ្ចូលប្រភេទ Account ជាអក្សរ",
-                                         reply_to_message_id=message_id)
+                    if not account_type:
+                        _settings_edit(chat_id, user_id,
+                            "⚠️ <b>សូមបញ្ចូលប្រភេទ Account ជាអក្សរ</b>\n\n"
+                            "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                            SETTINGS_CANCEL_IKB)
                         return
                     pending = session.get('pending_accounts', [])
                     existing_price = accounts_data.get('prices', {}).get(account_type, 0)
@@ -4015,11 +3985,12 @@ def handle_message(update):
                             'account_type': account_type
                         }
                     save_sessions_async()
-                    price_hint = f"\n\n(តម្លៃបច្ចុប្បន្ន: ${existing_price})" if existing_price else ""
-                    send_message(chat_id,
-                        f"*ប្រភេទ: {account_type}*\n\nសូមបញ្ចូលតម្លៃ (USD) ក្នុងមួយ Account:{price_hint}",
-                        reply_to_message_id=message_id, parse_mode="Markdown",
-                        reply_markup=ADD_ACCOUNT_KEYBOARD)
+                    price_hint = f"\n💵 <b>តម្លៃបច្ចុប្បន្ន: ${existing_price}</b>" if existing_price else ""
+                    _settings_edit(chat_id, user_id,
+                        f"📂 <b>ប្រភេទ: {html.escape(account_type)}</b>{price_hint}\n\n"
+                        "💲 សូមបញ្ចូលតម្លៃ (USD) ក្នុងមួយ Account:\n\n"
+                        "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                        SETTINGS_CANCEL_IKB)
                     return
 
                 if session['state'] == 'waiting_for_price':
@@ -4056,16 +4027,16 @@ def handle_message(update):
                         new_accounts     = [a for a in accounts if a['email'].lower() not in existing_emails]
 
                         if duplicate_emails:
-                            dup_list = '\n'.join(duplicate_emails)
+                            dup_list = '\n'.join(f'• {e}' for e in duplicate_emails)
                             if not new_accounts:
-                                send_message(chat_id,
-                                    f"❌ *មិនអាចបញ្ចូលបាន!*\n\nEmail ទាំងអស់មានស្រាប់ក្នុងប្រព័ន្ធ៖\n```\n{dup_list}\n```",
-                                    reply_to_message_id=message_id, parse_mode="Markdown")
+                                _settings_edit(chat_id, user_id,
+                                    f"❌ <b>មិនអាចបញ្ចូលបាន!</b>\n\nEmail ទាំងអស់មានស្រាប់ក្នុងប្រព័ន្ធ:\n<code>{html.escape(chr(10).join(duplicate_emails))}</code>\n\n"
+                                    "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", SETTINGS_CANCEL_IKB)
                                 return
                             else:
-                                send_message(chat_id,
-                                    f"⚠️ *Email ខាងក្រោមមានស្រាប់ ហើយត្រូវបានរំលង៖*\n```\n{dup_list}\n```",
-                                    reply_to_message_id=message_id, parse_mode="Markdown")
+                                _settings_edit(chat_id, user_id,
+                                    f"⚠️ <b>Email ខាងក្រោមមានស្រាប់ ហើយត្រូវបានរំលង:</b>\n<code>{html.escape(chr(10).join(duplicate_emails))}</code>",
+                                    SETTINGS_CANCEL_IKB)
 
                         accounts = new_accounts
                         count    = len(accounts)
@@ -4082,16 +4053,16 @@ def handle_message(update):
                         save_data()
                         save_sessions_async()
 
-                        send_message(chat_id,
-                            f"*✅ បានបញ្ចូល Account ដោយជោគជ័យ*\n\n"
-                            f"```\n🔹 ចំនួន: {count}\n\n🔹 ប្រភេទ: {account_type}\n\n🔹 តម្លៃ: {price}$\n```",
-                            reply_to_message_id=message_id, parse_mode="Markdown")
-                        send_admin_settings_menu(chat_id)
+                        _settings_edit(chat_id, user_id,
+                            f"✅ <b>បានបញ្ចូល Account ដោយជោគជ័យ</b>\n\n"
+                            f"<blockquote>🔹 ចំនួន: {count}\n🔹 ប្រភេទ: {html.escape(account_type)}\n🔹 តម្លៃ: ${price}</blockquote>",
+                            {'inline_keyboard': [[{'text': '↩️ ត្រឡប់ទៅ Settings', 'callback_data': 's:main'}]]})
                         logger.info(f"Admin {user_id} added {count} accounts of type {account_type} with price ${price}")
 
                     except ValueError:
-                        send_message(chat_id, "តម្លៃមិនត្រឹមត្រូវ។ សូមបញ្ចូលតម្លៃជាលេខ (ឧទាហរណ៍: 5.99)",
-                                     reply_to_message_id=message_id)
+                        _settings_edit(chat_id, user_id,
+                            "❌ <b>តម្លៃមិនត្រឹមត្រូវ</b>\n\nសូមបញ្ចូលតម្លៃជាលេខ (ឧ. <code>5.99</code>)\n\n"
+                            "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", SETTINGS_CANCEL_IKB)
                     return
 
             if user_id in user_sessions:
