@@ -1257,7 +1257,6 @@ BTN_DELETE_CANCEL   = '🚫 បោះបង់ការលុប'
 BTN_BROADCAST_CONFIRM = '✅ បញ្ជាក់ផ្សាយ'
 BTN_BROADCAST_CANCEL  = '🚫 បោះបង់ការផ្សាយ'
 BTN_CLONE_BOT         = 'បង្កើតសំឡេង Ai'
-BTN_CLONE_MENU        = '🤖 Clone Bot'
 BTN_CLONE_START       = '▶️ ចាប់ផ្តើម Clone Bot'
 BTN_CLONE_STOP        = '⏹ បញ្ឈប់ Clone Bot'
 BTN_CLONE_SET_TOKEN   = '🔑 កំណត់ Token'
@@ -1310,7 +1309,6 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
         [{'text': BTN_BUYERS}, {'text': BTN_PAYMENT}],
         [{'text': BTN_BAKONG}, {'text': BTN_CHANNEL}],
         [{'text': BTN_MAINTENANCE}],
-        [{'text': BTN_CLONE_MENU, 'style': 'primary'}],
     ],
     'resize_keyboard': True,
     'is_persistent': True
@@ -1392,7 +1390,7 @@ ADMIN_BUTTON_LABELS = {
     BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR,
     BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
     BTN_MAINT_ON, BTN_MAINT_OFF,
-    BTN_CLONE_BOT, BTN_CLONE_MENU, BTN_CLONE_START, BTN_CLONE_STOP,
+    BTN_CLONE_BOT, BTN_CLONE_START, BTN_CLONE_STOP,
     BTN_CLONE_SET_TOKEN, BTN_CLONE_TOKEN_CLEAR,
     BTN_TRANSLATE,
 }
@@ -3312,9 +3310,6 @@ def handle_message(update):
                 return
             if btn == BTN_CLONE_BOT:
                 _show_clone_bot_menu(chat_id)
-                return
-            if btn == BTN_CLONE_MENU:
-                _show_clone_main_menu(chat_id)
                 return
             if btn == BTN_TRANSLATE:
                 return
