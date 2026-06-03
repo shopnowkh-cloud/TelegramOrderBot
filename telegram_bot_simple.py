@@ -2564,8 +2564,7 @@ def _clone_handle_update(base_url, update):
                 _clone_api(base_url, 'deleteMessage', chat_id=chat_id, message_id=msg_id)
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
                 text=f"✅ <b>ភាសាបកប្រែ៖ {lang_name}</b>\n\n"
-                     f"💬 សូមផ្ញើអក្សរ — ខ្ញុំនឹង<i>បកប្រែ</i> + <i>បំប្លែងជាសំឡេង</i> ដោយស្វ័យប្រវត្តិ។\n"
-                     f"🔇 ផ្ញើ /notranslate ដើម្បីបិទ។",
+                     f"💬 សូមផ្ញើអក្សរ — ខ្ញុំនឹង<i>បកប្រែ</i> + <i>បំប្លែងជាសំឡេង</i> ដោយស្វ័យប្រវត្តិ។",
                 parse_mode="HTML")
         elif data == 'cln_tr_off':
             _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
@@ -2609,28 +2608,6 @@ def _clone_handle_update(base_url, update):
                  '<i>គ្រាន់តែ សរសេរអក្សរណាមួយ ហើយ ខ្ញុំនឹងបំប្លែងជាសំឡេងដោយស្វ័យប្រវត្តិ។</i> '
                  '<tg-emoji emoji-id="5199885118214436622">🔥</tg-emoji>',
             parse_mode="HTML")
-        return
-
-    if text.startswith('/translate'):
-        rows = []
-        items = list(TRANSLATE_LANGUAGES.items())
-        for i in range(0, len(items), 3):
-            row = [{'text': name, 'callback_data': f'cln_lang_{code}'}
-                   for code, name in items[i:i+3]]
-            rows.append(row)
-        rows.append([{'text': '🔇 បិទបកប្រែ', 'callback_data': 'cln_tr_off'}])
-        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-            text='🌐 <b>ជ្រើសរើសភាសាបកប្រែ</b>\n\nអក្សរដែលបញ្ជូននឹង<i>ត្រូវបកប្រែ</i> ហើយ<i>បំប្លែងជាសំឡេង</i>ដោយស្វ័យប្រវត្តិ។',
-            parse_mode="HTML",
-            reply_markup={'inline_keyboard': rows})
-        return
-
-    if text.startswith('/notranslate'):
-        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
-        _clone_bot_prefs.setdefault(user_id, {}).pop('translate_name', None)
-        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-                   text="🔇 <b>បានបិទបកប្រែ</b> — ត្រឡប់ទៅ Text to Voice ធម្មតា។",
-                   parse_mode="HTML")
         return
 
     prefs       = _clone_bot_prefs.get(user_id, {})
