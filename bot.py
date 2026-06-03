@@ -2189,6 +2189,7 @@ def handle_callback_query(update):
                 answer_callback(callback_query['id'], 'ប្រភេទនេះមិនមានទៀតហើយ!', True)
                 return
             answer_callback(callback_query['id'])
+            _admin_settings_msg[user_id] = callback_query['message']['message_id']
             count    = len(accounts_data['account_types'].get(type_name, []))
             price    = accounts_data.get('prices', {}).get(type_name, 0)
             confirm_cb = f"dtc:{_type_callback_id(type_name)}"
@@ -2209,6 +2210,7 @@ def handle_callback_query(update):
                 answer_callback(callback_query['id'], 'ប្រភេទនេះមិនមានទៀតហើយ!', True)
                 return
             answer_callback(callback_query['id'])
+            _admin_settings_msg[user_id] = callback_query['message']['message_id']
             count = len(accounts_data['account_types'].pop(type_name, []))
             accounts_data.get('prices', {}).pop(type_name, None)
             accounts_data['accounts'] = [a for a in accounts_data.get('accounts', []) if a.get('type') != type_name]
@@ -2220,6 +2222,7 @@ def handle_callback_query(update):
 
         elif callback_data == 'dtcancel' and is_admin(user_id):
             answer_callback(callback_query['id'])
+            _admin_settings_msg[user_id] = callback_query['message']['message_id']
             _show_delete_type_menu_inline(chat_id, user_id)
             return
 
@@ -2342,6 +2345,8 @@ def handle_callback_query(update):
         elif callback_data.startswith('s:') and is_admin(user_id):
             action = callback_data[2:]
             answer_callback(callback_query['id'])
+            # Always refresh stored panel message_id from the live callback
+            _admin_settings_msg[user_id] = callback_query['message']['message_id']
             if action == 'cancel_input':
                 sess = user_sessions.get(user_id, {})
                 return_key = sess.get('settings_return', 'main')
