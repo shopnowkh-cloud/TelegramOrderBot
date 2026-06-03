@@ -2362,6 +2362,46 @@ def handle_callback_query(update):
                     reply_markup=_clone_bots_inline_kb())
             return
 
+        elif callback_data.startswith('cbm_trl:') and is_admin(user_id):
+            bot_id = callback_data[8:]
+            answer_callback(callback_query['id'])
+            items = list(TRANSLATE_LANGUAGES.items())
+            rows  = []
+            for i in range(0, len(items), 3):
+                rows.append([{'text': name, 'callback_data': f"cbm_lang:{bot_id}:{code}"}
+                             for code, name in items[i:i+3]])
+            rows.append([
+                {'text': '🔇 បិទបកប្រែ', 'callback_data': f"cbm_lang:{bot_id}:off"},
+                {'text': '↩️ ត្រឡប់',   'callback_data': f"cbm:{bot_id}"},
+            ])
+            _tg_api('editMessageText',
+                    chat_id=chat_id,
+                    message_id=callback_query['message']['message_id'],
+                    text="🌐 <b>ជ្រើសភាសា Default សម្រាប់ Clone Bot</b>\n\n"
+                         "<i>ភាសានេះ apply ដល់អ្នកប្រើ Clone Bot ទាំងអស់ដែលមិនទាន់ជ្រើសភាសារបស់ខ្លួន</i>",
+                    parse_mode='HTML',
+                    reply_markup={'inline_keyboard': rows})
+            return
+
+        elif callback_data.startswith('cbm_lang:') and is_admin(user_id):
+            rest   = callback_data[9:]
+            bot_id, code = (rest.split(':', 1) + ['off'])[:2]
+            with _clone_bots_lock:
+                bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
+                if bot:
+                    if code == 'off':
+                        bot['default_lang']      = None
+                        bot['default_lang_name'] = None
+                    else:
+                        bot['default_lang']      = code
+                        bot['default_lang_name'] = TRANSLATE_LANGUAGES.get(code, code)
+            _save_clone_bots()
+            lang_name = TRANSLATE_LANGUAGES.get(code, code) if code != 'off' else 'បិទ'
+            answer_callback(callback_query['id'], f"✅ ភាសា: {lang_name}")
+            _show_clone_bot_detail(chat_id, bot_id,
+                                   edit_msg_id=callback_query['message']['message_id'])
+            return
+
         elif callback_data == 'cancel_buy':
             answer_callback(callback_query['id'])
             with _data_lock:
@@ -2615,6 +2655,13 @@ def _clone_send_voice(base_url, chat_id, ogg_bytes, reply_to=None, reply_markup=
         params['reply_markup'] = reply_markup
     return _clone_api(base_url, 'sendVoice', _files={'voice': buf}, **params)
 
+def _get_clone_bot_by_base_url(base_url):
+    with _clone_bots_lock:
+        for b in _clone_bots_list:
+            if b.get('token') and f"bot{b['token']}/" in base_url:
+                return dict(b)
+    return {}
+
 def _clone_handle_update(base_url, update):
     global _clone_bot_prefs
 
@@ -2682,20 +2729,43 @@ def _clone_handle_update(base_url, update):
     if text.startswith('/start'):
         _clone_bot_prefs.setdefault(user_id, {}).pop('translate_lang', None)
         _clone_bot_prefs.setdefault(user_id, {}).pop('translate_name', None)
+        bot_cfg      = _get_clone_bot_by_base_url(base_url)
+        default_lang = bot_cfg.get('default_lang')
+        if default_lang:
+            _clone_bot_prefs[user_id]['translate_lang'] = default_lang
+            _clone_bot_prefs[user_id]['translate_name'] = bot_cfg.get('default_lang_name', default_lang)
         _clone_api(base_url, 'sendMessage', chat_id=chat_id,
             text='<tg-emoji emoji-id="5798587088077066898">👋</tg-emoji> <b>សួស្តី</b> Sovannrady\n\n'
                  '<b>ខ្ញុំជា Text to voice bot</b>\n\n'
                  '<tg-emoji emoji-id="5471978009449731768">👉</tg-emoji>'
                  '<i>គ្រាន់តែ សរសេរអក្សរណាមួយ ហើយ ខ្ញុំនឹងបំប្លែងជាសំឡេងដោយស្វ័យប្រវត្តិ។</i> '
                  '<tg-emoji emoji-id="5199885118214436622">🔥</tg-emoji>',
-            parse_mode="HTML")
+            parse_mode="HTML",
+            reply_markup={'keyboard': [[{'text': '🌐 បកប្រែភាសា'}]],
+                          'resize_keyboard': True, 'is_persistent': True})
+        return
+
+    if text == '🌐 បកប្រែភាសា':
+        items = list(TRANSLATE_LANGUAGES.items())
+        rows  = []
+        for i in range(0, len(items), 3):
+            rows.append([{'text': name, 'callback_data': f'cln_lang_{code}'}
+                         for code, name in items[i:i+3]])
+        rows.append([{'text': '🔇 បិទបកប្រែ', 'callback_data': 'cln_tr_off'}])
+        _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+            text='🌐 <b>ជ្រើសរើសភាសាបកប្រែ</b>',
+            parse_mode="HTML",
+            reply_markup={'inline_keyboard': rows})
         return
 
     prefs       = _clone_bot_prefs.get(user_id, {})
     gender      = prefs.get('gender', 'female')
     speed       = prefs.get('speed', 'x1')
-    trans_lang  = prefs.get('translate_lang')
-    trans_name  = prefs.get('translate_name', trans_lang or '')
+    bot_cfg     = _get_clone_bot_by_base_url(base_url)
+    trans_lang  = prefs.get('translate_lang') or bot_cfg.get('default_lang')
+    trans_name  = (prefs.get('translate_name')
+                   or bot_cfg.get('default_lang_name')
+                   or trans_lang or '')
 
     tts_text = text
     if trans_lang:
@@ -2818,7 +2888,8 @@ def _load_clone_bots():
         with _clone_bots_lock:
             _clone_bots_list[:] = [
                 {'id': b['id'], 'name': b['name'], 'token': b['token'],
-                 'active': bool(b.get('active')), 'thread': None, 'stop_event': None}
+                 'active': bool(b.get('active')), 'thread': None, 'stop_event': None,
+                 'default_lang': b.get('default_lang'), 'default_lang_name': b.get('default_lang_name')}
                 for b in saved
             ]
         logger.info(f"Loaded {len(_clone_bots_list)} clone bot(s)")
@@ -2829,7 +2900,9 @@ def _save_clone_bots():
     try:
         with _clone_bots_lock:
             to_save = [{'id': b['id'], 'name': b['name'], 'token': b['token'],
-                        'active': bool(b.get('active'))} for b in _clone_bots_list]
+                        'active': bool(b.get('active')),
+                        'default_lang': b.get('default_lang'),
+                        'default_lang_name': b.get('default_lang_name')} for b in _clone_bots_list]
         set_setting('CLONE_BOTS_LIST', json.dumps(to_save, ensure_ascii=False))
     except Exception as e:
         logger.error(f"_save_clone_bots failed: {e}")
@@ -2903,10 +2976,12 @@ def _show_clone_bot_detail(chat_id, bot_id, edit_msg_id=None):
     alive      = bot.get('thread') and bot['thread'].is_alive()
     status     = "🟢 ដំណើរការ" if alive else "🔴 បញ្ឈប់"
     token_disp = f"<code>{bot['token'][:12]}...</code>" if bot.get('token') else "❌ មិនទាន់​កំណត់"
+    dlang      = bot.get('default_lang_name') or '—'
     text = (
         f"🤖 <b>{html.escape(bot['name'])}</b>\n\n"
         f"🔑 Token: {token_disp}\n"
-        f"📡 ស្ថានភាព: {status}\n\n"
+        f"📡 ស្ថានភាព: {status}\n"
+        f"🌐 ភាសា Default: <b>{dlang}</b>\n\n"
         f"<i>Clone Bot ប្តូរអក្សររបស់អ្នកប្រើជាសំឡេងដោយស្វ័យប្រវត្តិ</i>"
     )
     toggle = ({'text': '⏹ Stop', 'callback_data': f"cbm_stop:{bot_id}"}
@@ -2916,6 +2991,7 @@ def _show_clone_bot_detail(chat_id, bot_id, edit_msg_id=None):
         [toggle],
         [{'text': '🔑 Token', 'callback_data': f"cbm_token:{bot_id}"},
          {'text': '🗑 លុប',   'callback_data': f"cbm_del:{bot_id}"}],
+        [{'text': f"🌐 ភាសា: {dlang}", 'callback_data': f"cbm_trl:{bot_id}"}],
         [{'text': '↩️ ត្រឡប់', 'callback_data': 'cbm_list'}],
     ]}
     if edit_msg_id:
