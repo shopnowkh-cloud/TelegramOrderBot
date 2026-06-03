@@ -2568,9 +2568,11 @@ def _clone_handle_update(base_url, update):
 
     if text.startswith('/start'):
         _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-            text="👋 <b>សួស្តី!</b>\n\n🤖 ខ្ញុំជា <b>Text to Voice Bot</b>\n\n"
-                 "👉 <i>គ្រាន់​តែ​សរសេរ​អក្សរ ហើយ​ខ្ញុំ​នឹង​បំប្លែង​ជា​សំឡេង​ដោយ​ស្វ័យប្រវត្តិ</i>\n\n"
-                 "🌐 <i>គាំទ្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ລາວ · မြန်မာ · 日本語 ...</i>",
+            text='<tg-emoji emoji-id="5798587088077066898">👋</tg-emoji> <b>សួស្តី</b> Sovannrady\n\n'
+                 '<b>ខ្ញុំជា Text to voice bot</b>\n\n'
+                 '<tg-emoji emoji-id="5471978009449731768">👉</tg-emoji>'
+                 '<i>គ្រាន់តែ សរសេរអក្សរណាមួយ ហើយ ខ្ញុំនឹងបំប្លែងជាសំឡេងដោយស្វ័យប្រវត្តិ។</i> '
+                 '<tg-emoji emoji-id="5199885118214436622">🔥</tg-emoji>',
             parse_mode="HTML")
         return
 
