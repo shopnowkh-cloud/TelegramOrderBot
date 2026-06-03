@@ -11,3 +11,7 @@ pillow
 pyrogram
 qrcode
 requests
+bakong-khqr
+pillow
+qrcode
+requests
