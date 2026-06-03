@@ -1,72 +1,153 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import requests
-import time
-import logging
-import sys
-import json
-import os
+import asyncio
 import io
-import threading
-import hashlib
-import fcntl
+import json
+import logging
+import os
 import re
+import sys
+import time
+import hashlib
 import html
+import threading
+import fcntl
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.parse import quote as url_quote
-from bakong_khqr import KHQR
 
-# Configure logging
+import requests
+from bakong_khqr import KHQR
+from pyrogram import Client, filters
+from pyrogram.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+)
+from pyrogram.enums import ParseMode
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)]
 )
-
 logger = logging.getLogger(__name__)
 
-# Bot configuration
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+# ── Config ────────────────────────────────────────────────────────────────────
+BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+API_ID     = int(os.environ.get("TELEGRAM_API_ID", "0"))
+API_HASH   = os.environ.get("TELEGRAM_API_HASH", "")
+ADMIN_ID   = 5002402843
+EXTRA_ADMIN_IDS: set = set()
+CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
 KHMER_MESSAGE = "ជ្រើសរើស Account ដើម្បីបញ្ជាទិញ"
-ADMIN_ID = 5002402843
-
-# Additional admin user IDs (loaded from Neon at startup, managed via /admin).
-# ADMIN_ID is always implicitly an admin and is the destination for notifications.
-EXTRA_ADMIN_IDS = set()
 
 def is_admin(uid):
-    """Return True if uid is the primary admin or in the extra-admin set."""
     try:
         uid_int = int(uid)
     except (TypeError, ValueError):
         return False
     return uid_int == ADMIN_ID or uid_int in EXTRA_ADMIN_IDS
-CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# Persistent HTTP session — reuses TCP connections for faster Telegram API calls
+# ── Pyrogram MTProto client ───────────────────────────────────────────────────
+app = Client(
+    "bot_session",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN,
+    in_memory=True,
+)
+
+# Reference to the running asyncio event loop — set inside main().
+# All sync send-wrappers use this to schedule coroutines from threads.
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+# ── Thread pools ─────────────────────────────────────────────────────────────
+worker_pool    = ThreadPoolExecutor(max_workers=16)
+background_pool = ThreadPoolExecutor(max_workers=8)
+_data_lock     = threading.RLock()
+
+# HTTP session — only used for Neon DB and Bakong API (NOT Telegram)
 http = requests.Session()
 http.headers.update({'Connection': 'keep-alive'})
-worker_pool = ThreadPoolExecutor(max_workers=16)
-background_pool = ThreadPoolExecutor(max_workers=8)
-_data_lock = threading.RLock()
 
-# Bakong KHQR configuration — token loaded from secret
+# ── Bakong KHQR ───────────────────────────────────────────────────────────────
 BAKONG_TOKEN = os.environ.get("BAKONG_TOKEN", "")
-khqr_client = KHQR(BAKONG_TOKEN)
-
-# Payment merchant name (changeable by admin via /payment <name>)
+khqr_client  = KHQR(BAKONG_TOKEN)
 PAYMENT_NAME = "RADY"
-
-# Maintenance mode flag (admin /update on | /update off)
 MAINTENANCE_MODE = False
 
-# ── Manual KHQR builder (fallback when library generates invalid strings) ──
+# ── Pyrogram sync helper ──────────────────────────────────────────────────────
+def _pyro_sync(coro, timeout: float = 20, reraise: bool = False):
+    """Run a Pyrogram coroutine synchronously from any thread.
+    Returns the coroutine result, or None on error (raises if reraise=True)."""
+    if _event_loop is None or not _event_loop.is_running():
+        logger.warning("_pyro_sync called before event loop is running")
+        return None
+    future = asyncio.run_coroutine_threadsafe(coro, _event_loop)
+    try:
+        return future.result(timeout=timeout)
+    except Exception as e:
+        if reraise:
+            raise
+        logger.error(f"_pyro_sync error: {type(e).__name__}: {e}")
+        return None
+
+# ── Keyboard converter ────────────────────────────────────────────────────────
+def _convert_keyboard(markup):
+    """Convert a Bot-API-style keyboard dict to the matching Pyrogram type.
+    Pyrogram objects are returned as-is; None / False / "no_keyboard" → None."""
+    if markup is None or markup is False:
+        return None
+    if isinstance(markup, str):
+        return None  # "no_keyboard" or any unknown string
+    if isinstance(markup, (InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove)):
+        return markup  # already a Pyrogram object
+    if not isinstance(markup, dict):
+        return None
+
+    if markup.get('remove_keyboard'):
+        return ReplyKeyboardRemove()
+
+    if 'inline_keyboard' in markup:
+        rows = []
+        for row in markup['inline_keyboard']:
+            btn_row = []
+            for btn in row:
+                btn_row.append(InlineKeyboardButton(
+                    btn['text'],
+                    callback_data=btn.get('callback_data', ''),
+                ))
+            rows.append(btn_row)
+        return InlineKeyboardMarkup(rows)
+
+    if 'keyboard' in markup:
+        rows = []
+        for row in markup['keyboard']:
+            btn_row = [KeyboardButton(btn['text']) for btn in row]
+            rows.append(btn_row)
+        return ReplyKeyboardMarkup(
+            rows,
+            resize_keyboard=markup.get('resize_keyboard', False),
+            one_time_keyboard=markup.get('one_time_keyboard', False),
+            is_persistent=markup.get('is_persistent', False),
+        )
+
+    return None
+
+def _pm(parse_mode: str | None) -> ParseMode | None:
+    """Convert parse_mode string to Pyrogram ParseMode enum."""
+    if not parse_mode:
+        return None
+    return ParseMode.HTML if parse_mode.upper() == 'HTML' else ParseMode.MARKDOWN
+
+# ── Manual KHQR builder (fallback) ───────────────────────────────────────────
 def _crc16_ccitt(data: str) -> str:
-    """CRC16-CCITT-FALSE: poly=0x1021, init=0xFFFF, no reflection."""
     crc = 0xFFFF
     for ch in data:
         crc ^= ord(ch) << 8
@@ -80,26 +161,19 @@ def _tlv(tag: str, value: str) -> str:
 
 def _build_khqr_manual(bank_account, merchant_name, merchant_city,
                         amount, bill_number, phone, store_label, terminal_label):
-    """Build a valid KHQR EMV string with correct CRC16, bypassing the library."""
-    # Phone: 85593330905 → 093330905
     if phone.startswith('855'):
         phone_local = '0' + phone[3:]
     else:
         phone_local = phone[-9:] if len(phone) > 9 else phone
-
-    # Additional data (tag 62)
     add_data = (
         _tlv("03", store_label) +
         _tlv("02", phone_local) +
         _tlv("01", bill_number) +
         _tlv("07", terminal_label)
     )
-
-    # Merchant info (tag 99): current time + expiry in milliseconds
-    now_ms  = str(int(time.time() * 1000))
-    exp_ms  = str(int((time.time() + 86400) * 1000))   # +1 day
+    now_ms = str(int(time.time() * 1000))
+    exp_ms = str(int((time.time() + 86400) * 1000))
     info_data = _tlv("00", now_ms) + _tlv("01", exp_ms)
-
     body = (
         _tlv("00", "01") +
         _tlv("01", "12") +
@@ -117,15 +191,12 @@ def _build_khqr_manual(bank_account, merchant_name, merchant_city,
     return body + _crc16_ccitt(body)
 
 def generate_payment_qr(amount):
-    """Generate QR code using bakong-khqr library. Returns (img_bytes, md5) or (None, error_msg) on failure."""
-    # Check token is present
     if not BAKONG_TOKEN:
         msg = "BAKONG_TOKEN មិនមានក្នុង environment"
         logger.error(msg)
         return None, msg, None
     try:
         bill_number = f"TRX{int(time.time())}"
-        # Step 1: generate the KHQR string (local, no network)
         try:
             try:
                 qr = khqr_client.create_qr(
@@ -157,9 +228,8 @@ def generate_payment_qr(amount):
                 )
                 logger.info("create_qr without expiration succeeded (older library)")
             logger.info(f"KHQR string created, length={len(qr)}, start={qr[:40]}")
-            # Validate required EMV fields: currency (5303840) and amount (5404)
             if '5303840' not in qr or '5404' not in qr:
-                logger.warning(f"Library KHQR missing currency/amount — using manual builder")
+                logger.warning("Library KHQR missing currency/amount — using manual builder")
                 qr = _build_khqr_manual(
                     bank_account='sovannrady@aclb',
                     merchant_name=PAYMENT_NAME,
@@ -175,18 +245,14 @@ def generate_payment_qr(amount):
             msg = f"create_qr failed: {type(e).__name__}: {e}"
             logger.error(msg)
             return None, msg, None
-        # Step 2: compute MD5 locally (hashlib.md5 of the QR string — same as the library)
         md5 = compute_md5(qr)
         logger.info(f"MD5 computed: {md5}")
-        # Step 3: generate image with 3-layer fallback
         img_bytes = None
-        # Layer 1: bakong-khqr library's styled image (requires Pillow)
         try:
             img_bytes = khqr_client.qr_image(qr, format='bytes')
             logger.info("QR image generated via bakong-khqr library")
         except Exception as e1:
             logger.warning(f"bakong-khqr image failed ({type(e1).__name__}: {e1}), trying qrcode library")
-        # Layer 2: qrcode library directly
         if not img_bytes:
             try:
                 import qrcode
@@ -197,7 +263,6 @@ def generate_payment_qr(amount):
                 logger.info("QR image generated via qrcode library")
             except Exception as e2:
                 logger.warning(f"qrcode library failed ({type(e2).__name__}: {e2}), trying API fallback")
-        # Layer 3: free online QR API (no libraries needed)
         if not img_bytes:
             try:
                 qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=500x500&data={url_quote(qr)}"
@@ -217,19 +282,14 @@ def generate_payment_qr(amount):
         return None, msg, None
 
 def _bakong_api_url():
-    """Return correct Bakong API base URL based on token prefix."""
     if BAKONG_TOKEN and BAKONG_TOKEN.startswith("rbk"):
         return "https://api.bakongrelay.com/v1"
     return "https://api-bakong.nbc.gov.kh/v1"
 
 def compute_md5(qr: str) -> str:
-    """Compute MD5 of KHQR string locally (same algorithm the library uses)."""
-    import hashlib
     return hashlib.md5(qr.encode('utf-8')).hexdigest()
 
 def check_payment_status(md5):
-    """Check payment directly against Bakong relay API — no library dependency.
-    Returns (is_paid: bool, payment_data: dict or None)."""
     try:
         base = _bakong_api_url()
         resp = http.post(
@@ -250,8 +310,9 @@ def check_payment_status(md5):
         logger.error(f"Failed to check payment status: {type(e).__name__}: {e}")
     return False, None
 
+# ── Neon DB ───────────────────────────────────────────────────────────────────
 NEON_DATABASE_URL = os.environ.get("NEON_DATABASE_URL", "")
-_neon_host = urlparse(NEON_DATABASE_URL).hostname if NEON_DATABASE_URL else ""
+_neon_host    = urlparse(NEON_DATABASE_URL).hostname if NEON_DATABASE_URL else ""
 _neon_api_url = f"https://{_neon_host}/sql"
 _neon_headers = {
     'Neon-Connection-String': NEON_DATABASE_URL,
@@ -260,7 +321,6 @@ _neon_headers = {
 }
 
 def _neon_query(query, params=None, _retries=3, _backoff=2):
-    """Execute a SQL query via Neon HTTP API with automatic retry on cold-start / transient errors."""
     body = {'query': query}
     if params:
         body['params'] = [str(p) if p is not None else None for p in params]
@@ -280,40 +340,17 @@ def _neon_query(query, params=None, _retries=3, _backoff=2):
                 time.sleep(wait)
     raise last_exc
 
-
 def _neon_cleanup():
-    """Remove old rows that accumulate forever and waste storage.
-
-    Runs once per day inside the keepalive thread.
-
-    Rules
-    -----
-    - bot_sent_verifications   : delete rows older than 30 days
-    - bot_scheduled_deletions  : delete rows whose delete_at expired > 1 day ago
-    - bot_purchase_history     : clear the accounts JSONB for rows older than 90 days
-                                 (keeps the sale record but discards the credentials)
-    """
     try:
-        r1 = _neon_query(
-            "DELETE FROM bot_sent_verifications "
-            "WHERE first_sent_at < NOW() - INTERVAL '30 days'"
-        )
+        r1 = _neon_query("DELETE FROM bot_sent_verifications WHERE first_sent_at < NOW() - INTERVAL '30 days'")
         deleted_verif = (r1.get('rowCount') or 0)
-
-        r2 = _neon_query(
-            "DELETE FROM bot_scheduled_deletions "
-            "WHERE delete_at < NOW() - INTERVAL '1 day'"
-        )
+        r2 = _neon_query("DELETE FROM bot_scheduled_deletions WHERE delete_at < NOW() - INTERVAL '1 day'")
         deleted_sched = (r2.get('rowCount') or 0)
-
         r3 = _neon_query(
-            "UPDATE bot_purchase_history "
-            "SET accounts = '[]'::jsonb "
-            "WHERE accounts != '[]'::jsonb "
-            "  AND purchased_at < NOW() - INTERVAL '90 days'"
+            "UPDATE bot_purchase_history SET accounts = '[]'::jsonb "
+            "WHERE accounts != '[]'::jsonb AND purchased_at < NOW() - INTERVAL '90 days'"
         )
         cleared_accounts = (r3.get('rowCount') or 0)
-
         logger.info(
             f"Neon cleanup: removed {deleted_verif} old verifications, "
             f"{deleted_sched} expired deletions, "
@@ -323,11 +360,9 @@ def _neon_cleanup():
         logger.warning(f"Neon cleanup failed: {e}")
 
 def _neon_keepalive():
-    """Ping Neon every 4 minutes to prevent compute suspension on the free tier.
-    Also runs a daily cleanup to keep storage usage low."""
-    cleanup_interval = 24 * 60 * 60  # 24 hours in seconds
-    ping_interval    = 240            # 4 minutes in seconds
-    pings_per_cleanup = cleanup_interval // ping_interval  # ~360 pings
+    cleanup_interval = 24 * 60 * 60
+    ping_interval    = 240
+    pings_per_cleanup = cleanup_interval // ping_interval
     ping_count = 0
     while True:
         time.sleep(ping_interval)
@@ -342,7 +377,6 @@ def _neon_keepalive():
             _neon_cleanup()
 
 def _init_db():
-    """Create tables if they don't exist."""
     try:
         _neon_query("""
             CREATE TABLE IF NOT EXISTS bot_accounts (
@@ -379,10 +413,7 @@ def _init_db():
                 purchased_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        _neon_query("""
-            ALTER TABLE bot_purchase_history
-            ADD COLUMN IF NOT EXISTS accounts JSONB DEFAULT '[]'
-        """)
+        _neon_query("ALTER TABLE bot_purchase_history ADD COLUMN IF NOT EXISTS accounts JSONB DEFAULT '[]'")
         _neon_query("""
             CREATE TABLE IF NOT EXISTS bot_known_users (
                 user_id BIGINT PRIMARY KEY,
@@ -393,10 +424,7 @@ def _init_db():
                 last_seen TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        _neon_query("""
-            ALTER TABLE bot_known_users
-            ADD COLUMN IF NOT EXISTS admin_notified INTEGER DEFAULT 0
-        """)
+        _neon_query("ALTER TABLE bot_known_users ADD COLUMN IF NOT EXISTS admin_notified INTEGER DEFAULT 0")
         _neon_query("""
             CREATE TABLE IF NOT EXISTS bot_sent_verifications (
                 email TEXT NOT NULL,
@@ -429,9 +457,6 @@ def _init_db():
                 purchased_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        # Backfill any historical buyers into the known-users table so /users
-        # never loses anyone on a Vercel cold restart. They already bought, so
-        # mark admin_notified=TRUE to avoid spamming the admin about them.
         _neon_query("""
             INSERT INTO bot_known_users (user_id, first_seen, last_seen, admin_notified)
             SELECT DISTINCT user_id, MIN(purchased_at), MAX(purchased_at), 1
@@ -439,9 +464,6 @@ def _init_db():
             GROUP BY user_id
             ON CONFLICT (user_id) DO UPDATE SET admin_notified = 1
         """)
-        # Backfill bot_email_buyer_map from all existing purchase history rows.
-        # Use DISTINCT ON to keep only the most-recent purchase per email,
-        # avoiding "ON CONFLICT DO UPDATE affects row a second time" errors.
         _neon_query("""
             INSERT INTO bot_email_buyer_map (email, user_id, account_type, purchased_at)
             SELECT DISTINCT ON (acc->>'email')
@@ -476,7 +498,6 @@ def _init_db():
         logger.error(f"DB init failed: {e}")
 
 def get_setting(key, default=None):
-    """Read a single key from bot_settings; returns default if missing."""
     try:
         r = _neon_query("SELECT value FROM bot_settings WHERE key = $1", [key])
         rows = r.get('rows', []) or []
@@ -487,7 +508,6 @@ def get_setting(key, default=None):
     return default
 
 def set_setting(key, value):
-    """Upsert a key/value into bot_settings so it survives cold restarts."""
     try:
         _neon_query("""
             INSERT INTO bot_settings (key, value) VALUES ($1, $2)
@@ -496,15 +516,12 @@ def set_setting(key, value):
     except Exception as e:
         logger.error(f"Failed to save setting {key}: {e}")
 
-_data_loaded_ok = False   # True only after a successful load_data()
+_data_loaded_ok = False
 
 def load_data():
-    """Load accounts data from Neon via HTTP API.
-    Uses more retries than the default to survive Neon cold-start on bot restart."""
     global _data_loaded_ok
     try:
-        r = _neon_query("SELECT data FROM bot_accounts LIMIT 1",
-                        _retries=6, _backoff=3)   # up to ~45s wait for Neon wake-up
+        r = _neon_query("SELECT data FROM bot_accounts LIMIT 1", _retries=6, _backoff=3)
         if r['rows']:
             data = r['rows'][0]['data']
             if isinstance(data, str):
@@ -518,18 +535,14 @@ def load_data():
     return {'accounts': [], 'account_types': {}, 'prices': {}}
 
 def save_data():
-    """Save accounts data to Neon via HTTP API.
-    Refuses to save if the initial load failed (prevents wiping real data with an empty state)."""
     global _data_loaded_ok
     if not _data_loaded_ok:
-        # Try reloading first; if it still fails, abort the save to protect existing data
         logger.warning("save_data called before successful load — attempting reload before saving")
         reloaded = load_data()
         if not _data_loaded_ok:
             logger.error("save_data aborted: could not verify DB state. Data NOT overwritten.")
             return
         with _data_lock:
-            # Merge: keep DB data as base, overlay only keys present in current memory
             for key in ('account_types', 'prices'):
                 if accounts_data.get(key):
                     reloaded[key] = accounts_data[key]
@@ -544,7 +557,6 @@ def save_data():
         logger.error(f"Failed to save data to DB: {e}")
 
 def load_sessions():
-    """Load user sessions from Neon via HTTP API."""
     global user_sessions
     try:
         r = _neon_query("SELECT data FROM bot_sessions LIMIT 1")
@@ -558,7 +570,6 @@ def load_sessions():
         logger.error(f"Failed to load sessions from DB: {e}")
 
 def save_sessions():
-    """Save user sessions to Neon via HTTP API."""
     try:
         with _data_lock:
             payload = {str(k): v for k, v in user_sessions.items()}
@@ -587,21 +598,17 @@ def delete_pending_payment_async(user_id):
 def save_purchase_history_async(user_id, account_type, quantity, total_price, accounts=None):
     _run_background("save_purchase_history", save_purchase_history, user_id, account_type, quantity, total_price, accounts)
 
+# ── Message deletion (Pyrogram-based) ────────────────────────────────────────
 def _delete_message_now(chat_id, message_id):
-    response = http.post(
-        f"{API_URL}/deleteMessage",
-        data={'chat_id': chat_id, 'message_id': message_id},
-        timeout=4
-    )
-    if response.status_code >= 400:
-        logger.warning(f"Delete message HTTP failed: status={response.status_code} body={response.text}")
-        response.raise_for_status()
-    result = response.json()
-    if not result.get('ok'):
-        logger.warning(f"Delete message API failed: {result}")
+    try:
+        result = _pyro_sync(app.delete_messages(chat_id, message_id), timeout=5)
+        if result is not None:
+            logger.info(f"Deleted message {message_id} from chat {chat_id}")
+            return True
         return False
-    logger.info(f"Deleted message {message_id} from chat {chat_id}")
-    return True
+    except Exception as e:
+        logger.warning(f"Failed to delete message {message_id} in chat {chat_id}: {e}")
+        return False
 
 def delete_message_async(chat_id, message_id):
     if not message_id:
@@ -639,7 +646,6 @@ def _run_scheduled_delete(chat_id, message_id, delay_seconds):
         except Exception as e:
             logger.warning(f"Failed delayed message delete attempt {attempt + 1}: {e}")
         time.sleep(2)
-    # Best-effort cleanup even if Telegram rejected (message may already be gone)
     _clear_scheduled_deletion(chat_id, message_id)
 
 def delete_message_later(chat_id, message_id, delay_seconds=120):
@@ -649,7 +655,6 @@ def delete_message_later(chat_id, message_id, delay_seconds=120):
     _run_background("delete_message_later", _run_scheduled_delete, chat_id, message_id, delay_seconds)
 
 def resume_scheduled_deletions():
-    """On startup, re-arm any scheduled deletions saved in the DB so they survive cold restarts."""
     try:
         r = _neon_query(
             "SELECT chat_id, message_id, "
@@ -659,13 +664,10 @@ def resume_scheduled_deletions():
         rows = r.get('rows', []) or []
         for row in rows:
             try:
-                chat_id = int(row['chat_id'])
+                chat_id   = int(row['chat_id'])
                 message_id = int(row['message_id'])
-                remaining = int(row.get('remaining') or 0)
-                _run_background(
-                    "resume_scheduled_delete",
-                    _run_scheduled_delete, chat_id, message_id, remaining
-                )
+                remaining  = int(row.get('remaining') or 0)
+                _run_background("resume_scheduled_delete", _run_scheduled_delete, chat_id, message_id, remaining)
             except Exception as e:
                 logger.warning(f"Bad scheduled deletion row {row}: {e}")
         if rows:
@@ -673,8 +675,8 @@ def resume_scheduled_deletions():
     except Exception as e:
         logger.error(f"Failed to resume scheduled deletions: {e}")
 
+# ── Pending payments ──────────────────────────────────────────────────────────
 def save_pending_payment(user_id, chat_id, session):
-    """Save a pending payment to Neon DB so it persists across sessions."""
     try:
         _neon_query("""
             INSERT INTO bot_pending_payments
@@ -699,7 +701,6 @@ def save_pending_payment(user_id, chat_id, session):
         logger.error(f"Failed to save pending payment: {e}")
 
 def get_pending_payment(user_id):
-    """Get a pending payment from Neon DB."""
     try:
         r = _neon_query("SELECT * FROM bot_pending_payments WHERE user_id = $1", [str(user_id)])
         if r['rows']:
@@ -718,15 +719,14 @@ def get_pending_payment(user_id):
     return None
 
 def delete_pending_payment(user_id):
-    """Delete a pending payment from Neon DB."""
     try:
         _neon_query("DELETE FROM bot_pending_payments WHERE user_id = $1", [str(user_id)])
         logger.info(f"Deleted pending payment for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to delete pending payment: {e}")
 
+# ── Purchase history ──────────────────────────────────────────────────────────
 def save_purchase_history(user_id, account_type, quantity, total_price, accounts=None):
-    """Save a completed purchase to history and update email→buyer map."""
     try:
         accounts_list = accounts or []
         accounts_json = json.dumps(accounts_list, ensure_ascii=False)
@@ -734,7 +734,6 @@ def save_purchase_history(user_id, account_type, quantity, total_price, accounts
             "INSERT INTO bot_purchase_history (user_id, account_type, quantity, total_price, accounts) VALUES ($1, $2, $3, $4, $5)",
             [str(user_id), account_type, str(quantity), str(total_price), accounts_json]
         )
-        # Keep bot_email_buyer_map in sync so verification SMS always reaches buyer
         for acc in accounts_list:
             if isinstance(acc, dict) and acc.get('email'):
                 try:
@@ -752,7 +751,6 @@ def save_purchase_history(user_id, account_type, quantity, total_price, accounts
         logger.error(f"Failed to save purchase history: {e}")
 
 def get_purchase_history(user_id, limit=10):
-    """Get last N purchases for a user."""
     try:
         r = _neon_query(
             "SELECT account_type, quantity, total_price, accounts, purchased_at FROM bot_purchase_history WHERE user_id = $1 ORDER BY purchased_at DESC LIMIT $2",
@@ -764,7 +762,6 @@ def get_purchase_history(user_id, limit=10):
     return []
 
 def get_all_buyer_ids():
-    """Get all distinct user IDs from purchase history."""
     try:
         r = _neon_query("SELECT DISTINCT user_id FROM bot_purchase_history")
         return [int(row['user_id']) for row in r.get('rows', [])]
@@ -772,80 +769,37 @@ def get_all_buyer_ids():
         logger.error(f"Failed to get buyer IDs: {e}")
     return []
 
+# ── Email/buyer lookup ────────────────────────────────────────────────────────
 def find_buyer_by_email(email):
-    """Find the buyer of a given email — checks bot_email_buyer_map first, then purchase history."""
     email = (email or '').strip().lower()
     if not email:
         return None
     try:
-        # 1. Fast lookup from dedicated map table (case-insensitive for safety)
-        r = _neon_query(
-            "SELECT user_id FROM bot_email_buyer_map WHERE LOWER(email) = $1",
-            [email]
-        )
+        r = _neon_query("SELECT user_id FROM bot_email_buyer_map WHERE LOWER(email) = $1", [email])
         if r.get('rows'):
-            uid = int(r['rows'][0]['user_id'])
-            logger.info(f"Found buyer {uid} for {email} via email_buyer_map")
-            return uid
+            return int(r['rows'][0]['user_id'])
     except Exception as e:
         logger.error(f"email_buyer_map lookup failed for {email}: {e}")
-
     try:
-        # 2. Fallback: JSONB containment on purchase history
         r = _neon_query(
-            "SELECT user_id FROM bot_purchase_history "
-            "WHERE accounts @> $1::jsonb "
-            "ORDER BY purchased_at DESC LIMIT 1",
+            "SELECT user_id FROM bot_purchase_history WHERE accounts @> $1::jsonb ORDER BY purchased_at DESC LIMIT 1",
             [json.dumps([{"email": email}])]
         )
         if r.get('rows'):
             uid = int(r['rows'][0]['user_id'])
-            # Backfill the map so next lookup is instant
             try:
                 _neon_query("""
-                    INSERT INTO bot_email_buyer_map (email, user_id)
-                    VALUES ($1, $2)
-                    ON CONFLICT (email) DO UPDATE
-                        SET user_id = EXCLUDED.user_id, purchased_at = NOW()
+                    INSERT INTO bot_email_buyer_map (email, user_id) VALUES ($1, $2)
+                    ON CONFLICT (email) DO UPDATE SET user_id = EXCLUDED.user_id, purchased_at = NOW()
                 """, [email, str(uid)])
             except Exception:
                 pass
-            logger.info(f"Found buyer {uid} for {email} via purchase_history JSONB (backfilled map)")
             return uid
-
-        # 3. Last resort: ILIKE text search (handles old plain-string rows)
-        r2 = _neon_query(
-            "SELECT user_id, accounts FROM bot_purchase_history "
-            "WHERE accounts::text ILIKE $1 ORDER BY purchased_at DESC",
-            [f"%{email}%"]
-        )
-        for row in r2.get('rows', []):
-            accounts = row.get('accounts') or []
-            if isinstance(accounts, str):
-                try:
-                    accounts = json.loads(accounts)
-                except Exception:
-                    accounts = []
-            for account in accounts:
-                if str(account.get('email', '')).lower() == email.lower():
-                    uid = int(row.get('user_id'))
-                    try:
-                        _neon_query("""
-                            INSERT INTO bot_email_buyer_map (email, user_id)
-                            VALUES ($1, $2)
-                            ON CONFLICT (email) DO UPDATE
-                                SET user_id = EXCLUDED.user_id, purchased_at = NOW()
-                        """, [email, str(uid)])
-                    except Exception:
-                        pass
-                    logger.info(f"Found buyer {uid} for {email} via purchase_history ILIKE (backfilled map)")
-                    return uid
     except Exception as e:
         logger.error(f"Failed to find buyer by email {email}: {e}")
     return None
 
 def find_all_buyers_by_email(email):
-    """Return ALL distinct user_ids who ever bought the given email, ordered most-recent first."""
     email = (email or '').strip().lower()
     if not email:
         return []
@@ -854,8 +808,7 @@ def find_all_buyers_by_email(email):
     try:
         r = _neon_query(
             "SELECT user_id, MAX(purchased_at) AS last_at FROM bot_purchase_history "
-            "WHERE accounts @> $1::jsonb "
-            "GROUP BY user_id ORDER BY last_at DESC",
+            "WHERE accounts @> $1::jsonb GROUP BY user_id ORDER BY last_at DESC",
             [json.dumps([{"email": email}])]
         )
         for row in r.get('rows', []) or []:
@@ -865,7 +818,6 @@ def find_all_buyers_by_email(email):
                 buyers.append(uid)
     except Exception as e:
         logger.error(f"JSONB buyer scan failed for {email}: {e}")
-
     try:
         r2 = _neon_query(
             "SELECT user_id, accounts, purchased_at FROM bot_purchase_history "
@@ -873,13 +825,13 @@ def find_all_buyers_by_email(email):
             [f"%{email}%"]
         )
         for row in r2.get('rows', []) or []:
-            accounts = row.get('accounts') or []
-            if isinstance(accounts, str):
+            accs = row.get('accounts') or []
+            if isinstance(accs, str):
                 try:
-                    accounts = json.loads(accounts)
+                    accs = json.loads(accs)
                 except Exception:
-                    accounts = []
-            for account in accounts:
+                    accs = []
+            for account in accs:
                 if str(account.get('email', '')).strip().lower() == email:
                     uid = int(row['user_id'])
                     if uid not in seen:
@@ -888,12 +840,11 @@ def find_all_buyers_by_email(email):
                     break
     except Exception as e:
         logger.error(f"ILIKE buyer scan failed for {email}: {e}")
-
     return buyers
 
+# ── DB init + settings restore ────────────────────────────────────────────────
 _init_db()
 
-# Restore admin-configurable settings from Neon so they survive Vercel cold restarts
 _saved_payment_name = get_setting('PAYMENT_NAME')
 if _saved_payment_name:
     PAYMENT_NAME = _saved_payment_name
@@ -917,33 +868,22 @@ if _saved_bakong:
     except Exception as e:
         logger.error(f"Failed to rebuild KHQR client from saved token: {e}")
     logger.info(f"Loaded BAKONG_TOKEN from DB: {BAKONG_TOKEN[:10]}...")
-
 _saved_channel_id = get_setting('TELEGRAM_CHANNEL_ID')
 if _saved_channel_id:
     CHANNEL_ID = _saved_channel_id.strip()
     logger.info(f"Loaded TELEGRAM_CHANNEL_ID from DB: {CHANNEL_ID}")
 
-# User session storage for tracking conversation state
-user_sessions = {}
-
-# Process-local cache of user IDs we've already notified the admin about.
-# Backed by the bot_known_users.admin_notified column so a Vercel cold restart
-# never re-spams the admin with duplicate "new user" notifications.
-_notified_users = set()
+# ── Session / account storage ─────────────────────────────────────────────────
+user_sessions: dict = {}
+_notified_users: set = set()
 _notified_users_lock = threading.Lock()
 
 def _is_admin_notified(uid):
-    """Return True if the admin has already been notified about this user.
-    Checks the in-memory cache first, then falls back to the DB so the answer
-    survives cold restarts."""
     with _notified_users_lock:
         if uid in _notified_users:
             return True
     try:
-        r = _neon_query(
-            "SELECT admin_notified FROM bot_known_users WHERE user_id = $1",
-            [str(uid)]
-        )
+        r = _neon_query("SELECT admin_notified FROM bot_known_users WHERE user_id = $1", [str(uid)])
         rows = r.get('rows', []) or []
         if rows and rows[0].get('admin_notified'):
             with _notified_users_lock:
@@ -953,29 +893,27 @@ def _is_admin_notified(uid):
         logger.error(f"Failed to check admin_notified for {uid}: {e}")
     return False
 
+# ── Fetch user info via Pyrogram ──────────────────────────────────────────────
 def fetch_user_info(user_id):
-    """Fetch a user's profile from Telegram via getChat. Returns dict or None."""
+    """Fetch a user's profile from Telegram via Pyrogram get_chat."""
     try:
-        resp = http.get(
-            f"{API_URL}/getChat",
-            params={'chat_id': user_id},
-            timeout=5
-        )
-        data = resp.json()
-        if data.get('ok'):
-            return data.get('result') or {}
+        chat = _pyro_sync(app.get_chat(user_id), timeout=5)
+        if chat:
+            return {
+                'id': chat.id,
+                'first_name': chat.first_name or '',
+                'last_name': chat.last_name or '',
+                'username': chat.username or '',
+            }
     except Exception as e:
-        logger.error(f"getChat failed for {user_id}: {e}")
+        logger.error(f"get_chat failed for {user_id}: {e}")
     return None
 
 def backfill_known_user_profiles():
-    """For known users with missing name/username, fetch from Telegram and update DB."""
     try:
         r = _neon_query(
             "SELECT user_id FROM bot_known_users "
-            "WHERE COALESCE(first_name, '') = '' "
-            "AND COALESCE(last_name, '') = '' "
-            "AND COALESCE(username, '') = ''"
+            "WHERE COALESCE(first_name, '') = '' AND COALESCE(last_name, '') = '' AND COALESCE(username, '') = ''"
         )
         rows = r.get('rows', [])
         for row in rows:
@@ -984,7 +922,7 @@ def backfill_known_user_profiles():
             if not info:
                 continue
             first = info.get('first_name') or ''
-            last = info.get('last_name') or ''
+            last  = info.get('last_name') or ''
             uname = info.get('username') or ''
             try:
                 _neon_query(
@@ -997,24 +935,22 @@ def backfill_known_user_profiles():
     except Exception as e:
         logger.error(f"backfill_known_user_profiles error: {e}")
 
-
+# ── Notify admin of new users ─────────────────────────────────────────────────
 def notify_admin_new_user(user):
-    """Send a 'new user' notification to the admin once per cold start per user."""
     try:
         uid = user.get('id')
         if not uid or uid == ADMIN_ID:
             return
-        # Cross-restart de-dupe: skip if the DB already says we've notified.
         if _is_admin_notified(uid):
             return
         with _notified_users_lock:
             if uid in _notified_users:
                 return
             _notified_users.add(uid)
-        first = user.get('first_name', '') or ''
-        last = user.get('last_name', '') or ''
-        full_name = f"{first} {last}".strip() or 'N/A'
-        username = user.get('username')
+        first       = user.get('first_name', '') or ''
+        last        = user.get('last_name', '') or ''
+        full_name   = f"{first} {last}".strip() or 'N/A'
+        username    = user.get('username')
         username_str = f"@{username}" if username else '—'
         msg = (
             "🆕 អ្នកប្រើប្រាស់ថ្មី!\n\n"
@@ -1024,11 +960,7 @@ def notify_admin_new_user(user):
         )
         def _send():
             try:
-                http.post(
-                    f"{API_URL}/sendMessage",
-                    data={'chat_id': ADMIN_ID, 'text': msg, 'parse_mode': 'HTML'},
-                    timeout=5
-                )
+                send_message(ADMIN_ID, msg, parse_mode='HTML', reply_to_message_id=False, reply_markup=False)
             except Exception as e:
                 logger.error(f"Failed to send new-user notification: {e}")
             try:
@@ -1048,13 +980,11 @@ def notify_admin_new_user(user):
     except Exception as e:
         logger.error(f"notify_admin_new_user error: {e}")
 
-# Account storage - loaded from file for persistence across restarts
+# ── Account storage ───────────────────────────────────────────────────────────
 accounts_data = load_data()
-
-# Always load persisted sessions on startup
 load_sessions()
 
-# Tracks the current user message_id per worker so replies never cross between users
+# ── Thread-local reply context ────────────────────────────────────────────────
 _reply_context = threading.local()
 START_BANNER_FILE_ID = get_setting('START_BANNER_FILE_ID') or os.environ.get("START_BANNER_FILE_ID", "")
 if START_BANNER_FILE_ID:
@@ -1079,203 +1009,183 @@ def _short_label(text, limit=36):
     clean = " ".join(str(text).split())
     return clean if len(clean) <= limit else clean[:limit - 1] + "…"
 
-def send_message(chat_id, text, reply_to_message_id=None, parse_mode=None, reply_markup=None, message_effect_id=None):
-    """Send a message to a specific chat."""
-    url = f"{API_URL}/sendMessage"
-    data = {
-        'chat_id': chat_id,
-        'text': text
-    }
-    
+# ── Telegram send helpers (Pyrogram-based, sync wrappers) ─────────────────────
+def send_message(chat_id, text, reply_to_message_id=None, parse_mode=None,
+                 reply_markup=None, message_effect_id=None):
     effective_reply_to = _get_reply_to_id() if reply_to_message_id is None else reply_to_message_id
-    if effective_reply_to:
-        data['reply_to_message_id'] = effective_reply_to
-        data['allow_sending_without_reply'] = True
-    
-    if parse_mode:
-        data['parse_mode'] = parse_mode
+    if effective_reply_to is False:
+        effective_reply_to = None
 
     if reply_markup == "no_keyboard":
-        pass
+        kb = None
     else:
         effective_markup = reply_markup if (reply_markup is not None and reply_markup is not False) else MAIN_REPLY_KEYBOARD
-        data['reply_markup'] = json.dumps(effective_markup)
+        kb = _convert_keyboard(effective_markup)
 
-    if message_effect_id:
-        data['message_effect_id'] = message_effect_id
-    
+    kwargs = {}
+    if effective_reply_to:
+        kwargs['reply_to_message_id'] = int(effective_reply_to)
+    if parse_mode:
+        kwargs['parse_mode'] = _pm(parse_mode)
+    if kb is not None:
+        kwargs['reply_markup'] = kb
+
     try:
-        response = http.post(url, data=data, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        body = ''
-        if hasattr(e, 'response') and e.response is not None:
-            body = e.response.text
-        logger.error(f"Failed to send message: {e} | body: {body}")
-        return None
+        result = _pyro_sync(app.send_message(chat_id, text, **kwargs))
+        if result:
+            return {'ok': True, 'result': {'message_id': result.id}}
+    except Exception as e:
+        logger.error(f"Failed to send message: {e}")
+    return None
 
 def send_sticker(chat_id, sticker_id, reply_markup=None):
-    """Send a sticker to a specific chat."""
-    url = f"{API_URL}/sendSticker"
-    data = {
-        'chat_id': chat_id,
-        'sticker': sticker_id
-    }
-    if reply_markup is not None:
-        data['reply_markup'] = json.dumps(reply_markup)
+    kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
+    kwargs = {}
+    if kb is not None:
+        kwargs['reply_markup'] = kb
     try:
-        response = http.post(url, data=data, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
+        result = _pyro_sync(app.send_sticker(chat_id, sticker_id, **kwargs))
+        if result:
+            return {'ok': True, 'result': {'message_id': result.id}}
+    except Exception as e:
         logger.error(f"Failed to send sticker: {e}")
-        return None
+    return None
 
-def send_photo(chat_id, photo_path, caption=None, parse_mode=None, reply_markup=None, message_effect_id=None):
-    """Send a photo to a specific chat."""
-    url = f"{API_URL}/sendPhoto"
-    data = {
-        'chat_id': chat_id
-    }
-    
+def send_photo(chat_id, photo_path, caption=None, parse_mode=None,
+               reply_markup=None, message_effect_id=None):
+    kwargs = {}
     if caption:
-        data['caption'] = caption
-    
+        kwargs['caption'] = caption
     if parse_mode:
-        data['parse_mode'] = parse_mode
-    
-    if reply_markup:
-        data['reply_markup'] = json.dumps(reply_markup)
-    
-    if message_effect_id:
-        data['message_effect_id'] = message_effect_id
-    
+        kwargs['parse_mode'] = _pm(parse_mode)
+    kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
+    if kb is not None:
+        kwargs['reply_markup'] = kb
     try:
-        with open(photo_path, 'rb') as photo:
-            files = {'photo': photo}
-            response = http.post(url, data=data, files=files, timeout=10)
-            response.raise_for_status()
-            return response.json()
-    except requests.RequestException as e:
+        result = _pyro_sync(app.send_photo(chat_id, photo_path, **kwargs))
+        if result:
+            return {'ok': True, 'result': {'message_id': result.id,
+                                            'photo': [{'file_id': result.photo.file_id}] if result.photo else []}}
+    except Exception as e:
         logger.error(f"Failed to send photo: {e}")
-        return None
+    return None
 
-def send_start_banner(chat_id, caption=None, parse_mode=None, message_effect_id=None, reply_markup=None):
-    global START_BANNER_FILE_ID
-    url = f"{API_URL}/sendPhoto"
-    data = {'chat_id': chat_id}
+def send_photo_bytes(chat_id, photo_bytes, caption=None, parse_mode=None, reply_markup=None):
+    buf = io.BytesIO(photo_bytes)
+    buf.name = "photo.png"
+    kwargs = {}
     if caption:
-        data['caption'] = caption
+        kwargs['caption'] = caption
     if parse_mode:
-        data['parse_mode'] = parse_mode
-    if message_effect_id:
-        data['message_effect_id'] = message_effect_id
-    if reply_markup:
-        data['reply_markup'] = json.dumps(reply_markup)
+        kwargs['parse_mode'] = _pm(parse_mode)
+    kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
+    if kb is not None:
+        kwargs['reply_markup'] = kb
+    try:
+        result = _pyro_sync(app.send_photo(chat_id, buf, **kwargs), timeout=20)
+        if result:
+            return {'ok': True, 'result': {'message_id': result.id}}
+    except Exception as e:
+        logger.error(f"Failed to send photo bytes: {e}")
+    return None
+
+def send_photo_url(chat_id, photo_url, caption=None, parse_mode=None, reply_markup=None):
+    kwargs = {}
+    if caption:
+        kwargs['caption'] = caption
+    if parse_mode:
+        kwargs['parse_mode'] = _pm(parse_mode)
+    kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
+    if kb is not None:
+        kwargs['reply_markup'] = kb
+    try:
+        result = _pyro_sync(app.send_photo(chat_id, photo_url, **kwargs))
+        if result:
+            return {'ok': True, 'result': {'message_id': result.id}}
+    except Exception as e:
+        logger.error(f"Failed to send photo URL: {e}")
+    return None
+
+def send_start_banner(chat_id, caption=None, parse_mode=None,
+                      message_effect_id=None, reply_markup=None):
+    global START_BANNER_FILE_ID
+    kwargs = {}
+    if caption:
+        kwargs['caption'] = caption
+    if parse_mode:
+        kwargs['parse_mode'] = _pm(parse_mode)
+    kb = _convert_keyboard(reply_markup) if reply_markup is not None else None
+    if kb is not None:
+        kwargs['reply_markup'] = kb
 
     if START_BANNER_FILE_ID:
         try:
-            data['photo'] = START_BANNER_FILE_ID
-            response = http.post(url, data=data, timeout=6)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
+            result = _pyro_sync(app.send_photo(chat_id, START_BANNER_FILE_ID, **kwargs), timeout=8)
+            if result:
+                return {'ok': True, 'result': {'message_id': result.id}}
+        except Exception as e:
             logger.warning(f"Cached start banner failed, uploading again: {e}")
             START_BANNER_FILE_ID = ""
-            data.pop('photo', None)
 
     try:
-        with open('start_banner.jpg', 'rb') as photo:
-            files = {'photo': photo}
-            response = http.post(url, data=data, files=files, timeout=10)
-            response.raise_for_status()
-            result = response.json()
-            photos = result.get('result', {}).get('photo', [])
-            if photos:
-                new_file_id = photos[-1].get('file_id', "")
-                if new_file_id and new_file_id != START_BANNER_FILE_ID:
-                    START_BANNER_FILE_ID = new_file_id
-                    _run_background("save_banner_file_id", set_setting, 'START_BANNER_FILE_ID', new_file_id)
-            return result
-    except requests.RequestException as e:
+        result = _pyro_sync(app.send_photo(chat_id, 'start_banner.jpg', **kwargs), timeout=15)
+        if result:
+            if result.photo:
+                new_id = result.photo.file_id
+                if new_id and new_id != START_BANNER_FILE_ID:
+                    START_BANNER_FILE_ID = new_id
+                    _run_background("save_banner_file_id", set_setting, 'START_BANNER_FILE_ID', new_id)
+            return {'ok': True, 'result': {'message_id': result.id}}
+    except Exception as e:
         logger.error(f"Failed to send start banner: {e}")
-        return None
+    return None
 
 def answer_callback(callback_query_id, text=None, show_alert=False):
-    data = {'callback_query_id': callback_query_id}
+    kwargs = {}
     if text:
-        data['text'] = text
+        kwargs['text'] = text
     if show_alert:
-        data['show_alert'] = True
+        kwargs['show_alert'] = True
     try:
-        return http.post(f"{API_URL}/answerCallbackQuery", data=data, timeout=4)
-    except requests.RequestException as e:
+        _pyro_sync(app.answer_callback_query(callback_query_id, **kwargs), timeout=5)
+    except Exception as e:
         logger.warning(f"Failed to answer callback quickly: {e}")
-        return None
-
-def send_photo_bytes(chat_id, photo_bytes, caption=None, parse_mode=None, reply_markup=None):
-    """Send a photo from raw bytes to a specific chat (no filesystem needed)."""
-    url = f"{API_URL}/sendPhoto"
-    data = {'chat_id': chat_id}
-    if caption:
-        data['caption'] = caption
-    if parse_mode:
-        data['parse_mode'] = parse_mode
-    if reply_markup:
-        data['reply_markup'] = json.dumps(reply_markup)
-    try:
-        files = {'photo': ('qr.png', photo_bytes, 'image/png')}
-        response = http.post(url, data=data, files=files, timeout=15)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logger.error(f"Failed to send photo bytes: {e}")
-        return None
 
 def copy_message(chat_id, from_chat_id, message_id, reply_markup=None):
-    """Copy a message to a chat (no 'forwarded from' label)."""
-    url = f"{API_URL}/copyMessage"
-    data = {'chat_id': chat_id, 'from_chat_id': from_chat_id, 'message_id': message_id}
+    kwargs = {}
     if reply_markup:
-        data['reply_markup'] = reply_markup
+        kb = _convert_keyboard(reply_markup)
+        if kb is not None:
+            kwargs['reply_markup'] = kb
     try:
-        response = http.post(url, json=data, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
+        result = _pyro_sync(app.copy_message(chat_id, from_chat_id, message_id, **kwargs))
+        if result:
+            return {'ok': True, 'result': {'message_id': result.id}}
+    except Exception as e:
         logger.error(f"Failed to copy message: {e}")
-        return None
+    return None
 
-
-def send_photo_url(chat_id, photo_url, caption=None, parse_mode=None, reply_markup=None):
-    """Send a photo from a URL to a specific chat."""
-    url = f"{API_URL}/sendPhoto"
-    data = {
-        'chat_id': chat_id,
-        'photo': photo_url
-    }
-    if caption:
-        data['caption'] = caption
-    if parse_mode:
-        data['parse_mode'] = parse_mode
-    if reply_markup:
-        data['reply_markup'] = json.dumps(reply_markup)
+def _send_document_bytes(chat_id, content_bytes, filename, caption=None):
+    """Send a document from raw bytes."""
+    buf = io.BytesIO(content_bytes)
+    buf.name = filename
     try:
-        response = http.post(url, data=data, timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        logger.error(f"Failed to send photo URL: {e}")
+        result = _pyro_sync(
+            app.send_document(chat_id, buf, caption=caption),
+            timeout=30
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Failed to send document: {e}")
         return None
 
-
+# ── Channel helpers ───────────────────────────────────────────────────────────
 def _is_configured_channel(chat_id):
     return CHANNEL_ID and str(chat_id) == str(CHANNEL_ID)
 
 def parse_egets_verification_message(text):
     email_match = re.search(r'[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}', text or '')
-    code_match = re.search(r'(?<!\d)\d{4,8}(?!\d)', text or '')
+    code_match  = re.search(r'(?<!\d)\d{4,8}(?!\d)', text or '')
     if not email_match or not code_match:
         return None, None
     return email_match.group(0).strip().lower(), code_match.group(0)
@@ -1288,10 +1198,9 @@ def format_egets_verification_message(email, code):
     )
 
 def handle_channel_post(channel_post):
-    """Send posts from the configured channel to the admin private chat."""
-    chat = channel_post.get('chat', {})
-    chat_id = chat.get('id')
-    message_id = channel_post.get('message_id')
+    chat        = channel_post.get('chat', {})
+    chat_id     = chat.get('id')
+    message_id  = channel_post.get('message_id')
     if not _is_configured_channel(chat_id) or not message_id:
         return
 
@@ -1302,7 +1211,8 @@ def handle_channel_post(channel_post):
         buyer_ids = find_all_buyers_by_email(verification_email)
         delivered_to = []
         for buyer_id in buyer_ids:
-            buyer_sent = send_message(buyer_id, formatted_message, parse_mode="HTML", reply_to_message_id=False, reply_markup=False)
+            buyer_sent = send_message(buyer_id, formatted_message, parse_mode="HTML",
+                                      reply_to_message_id=False, reply_markup=False)
             if buyer_sent and buyer_sent.get('result'):
                 buyer_message_id = buyer_sent['result'].get('message_id')
                 delete_message_later(buyer_id, buyer_message_id, 60)
@@ -1312,7 +1222,8 @@ def handle_channel_post(channel_post):
                 logger.warning(f"Direct send to buyer {buyer_id} failed for {verification_email}")
         if not delivered_to:
             logger.warning(f"No buyer reachable for {verification_email}; sending to admin")
-            sent = send_message(ADMIN_ID, formatted_message, parse_mode="HTML", reply_to_message_id=False, reply_markup=False)
+            sent = send_message(ADMIN_ID, formatted_message, parse_mode="HTML",
+                                reply_to_message_id=False, reply_markup=False)
             if sent and sent.get('result'):
                 delete_message_later(ADMIN_ID, sent['result'].get('message_id'), 60)
         return
@@ -1321,35 +1232,17 @@ def handle_channel_post(channel_post):
     if copied:
         logger.info(f"Copied channel post {message_id} from {chat_id} to admin {ADMIN_ID}")
         return
-
     if text:
         send_message(ADMIN_ID, text, reply_to_message_id=False, reply_markup=False)
 
-def get_updates(offset=None):
-    """Get updates from Telegram API. Raises HTTPError on 4xx/5xx so caller can handle 409."""
-    url = f"{API_URL}/getUpdates"
-    params = {
-        'timeout': 30,
-        'limit': 100,
-        'allowed_updates': json.dumps(['message', 'callback_query', 'channel_post', 'edited_channel_post'])
-    }
-    if offset:
-        params['offset'] = offset
-    response = http.get(url, params=params, timeout=35)
-    response.raise_for_status()
-    return response.json()
-
+# ── Account selection / keyboards ─────────────────────────────────────────────
 ACCOUNT_BTN_PREFIX = "ទិញ "
 ACCOUNT_BTN_SUFFIX = " - មានក្នុងស្តុក "
 
 def show_account_selection(chat_id):
-    """Send the account selection with inline keyboard."""
     send_account_selection_inline(chat_id)
 
-
 def send_account_selection_inline(chat_id):
-    """Send the account selection message with inline keyboard buttons showing stock counts.
-    Does nothing if there are no account types defined at all."""
     inline_rows = []
     with _data_lock:
         types = dict(accounts_data.get('account_types', {}))
@@ -1363,24 +1256,20 @@ def send_account_selection_inline(chat_id):
         cb = f"buy:{_type_callback_id(account_type)}"
         inline_rows.append([{'text': btn_text, 'callback_data': cb}])
     if not inline_rows:
-        send_message(chat_id, "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>", parse_mode="HTML", reply_to_message_id=False)
+        send_message(chat_id, "<i>សូមអភ័យទោស អស់ពីស្តុក 🪤</i>",
+                     parse_mode="HTML", reply_to_message_id=False)
         return
     inline_keyboard = {'inline_keyboard': inline_rows}
     send_message(chat_id, "<b>សូមជ្រើសរើសគូប៉ុងដើម្បីទិញ៖</b>",
                  reply_to_message_id=False, reply_markup=inline_keyboard, parse_mode="HTML")
 
-
-MAIN_REPLY_KEYBOARD = {'remove_keyboard': True}
-
-ADMIN_REPLY_KEYBOARD = {'remove_keyboard': True}
-
-ADMIN_SETTINGS_BTN = '⚙️កំណត់'
+MAIN_REPLY_KEYBOARD    = {'remove_keyboard': True}
+ADMIN_REPLY_KEYBOARD   = {'remove_keyboard': True}
+ADMIN_SETTINGS_BTN     = '⚙️កំណត់'
 
 def _main_kb(uid):
-    """Return remove_keyboard for all users — no persistent reply keyboard."""
     return MAIN_REPLY_KEYBOARD
 
-# ── Admin settings reply-keyboard buttons ──
 BTN_ADD_ACCOUNT     = '➕ បន្ថែម Account'
 BTN_DELETE_TYPE     = '🗑 លុបប្រភេទ'
 BTN_USERS           = '👥 អ្នកប្រើប្រាស់'
@@ -1393,7 +1282,6 @@ BTN_MAINTENANCE     = '🛠 Maintenance Mode'
 BTN_BROADCAST       = '📢 ផ្សាយព័ត៌មាន'
 BTN_BACK_HOME       = '🏠 ត្រឡប់ទៅម៉ឺនុយដើម'
 BTN_BACK_SETTINGS   = '↩️ ត្រឡប់ទៅកំណត់'
-
 BTN_PAYMENT_EDIT    = '✏️ ប្តូរឈ្មោះ Payment'
 BTN_BAKONG_EDIT     = '✏️ ប្តូរ Bakong Token'
 BTN_CHANNEL_EDIT    = '✏️ ប្តូរ Channel ID'
@@ -1429,69 +1317,39 @@ ADMIN_SETTINGS_REPLY_KEYBOARD = {
 }
 
 PAYMENT_SUBMENU_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_PAYMENT_EDIT}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
+    'keyboard': [[{'text': BTN_PAYMENT_EDIT}], [{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
 }
-
 BAKONG_SUBMENU_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_BAKONG_EDIT}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
+    'keyboard': [[{'text': BTN_BAKONG_EDIT}], [{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
 }
-
 CHANNEL_SUBMENU_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_CHANNEL_EDIT}, {'text': BTN_CHANNEL_CLEAR}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
+    'keyboard': [[{'text': BTN_CHANNEL_EDIT}, {'text': BTN_CHANNEL_CLEAR}], [{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
 }
-
 ADMINS_SUBMENU_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_ADMIN_ADD}, {'text': BTN_ADMIN_REMOVE}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
+    'keyboard': [[{'text': BTN_ADMIN_ADD}, {'text': BTN_ADMIN_REMOVE}], [{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
 }
-
 MAINTENANCE_SUBMENU_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_MAINT_ON}, {'text': BTN_MAINT_OFF}],
-        [{'text': BTN_BACK_SETTINGS}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
+    'keyboard': [[{'text': BTN_MAINT_ON}, {'text': BTN_MAINT_OFF}], [{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
 }
-
 CANCEL_INPUT_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_CANCEL_INPUT}],
-    ],
-    'resize_keyboard': True,
-    'one_time_keyboard': False,
-    'is_persistent': True
+    'keyboard': [[{'text': BTN_CANCEL_INPUT}]],
+    'resize_keyboard': True, 'one_time_keyboard': False, 'is_persistent': True
 }
-
 ADD_ACCOUNT_KEYBOARD = {
-    'keyboard': [
-        [{'text': BTN_BACK_SETTINGS}],
-    ],
-    'resize_keyboard': True,
-    'is_persistent': True
+    'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
+    'resize_keyboard': True, 'is_persistent': True
+}
+CONFIRM_REPLY_KEYBOARD = {
+    'keyboard': [[{'text': '🚫 បោះបង់'}, {'text': '✅ យល់ព្រម'}]],
+    'resize_keyboard': True, 'one_time_keyboard': True
 }
 
 def _build_account_type_keyboard():
-    """Build a reply keyboard with account types that have stock > 0 (2 per row) plus a back button."""
     with _data_lock:
         types = sorted(
             t for t, accs in accounts_data.get('account_types', {}).items()
@@ -1506,8 +1364,6 @@ def _build_account_type_keyboard():
     rows.append([{'text': BTN_BACK_SETTINGS}])
     return {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
 
-# Set of submenu/leaf button labels admins can press; used to keep them out of the
-# unrecognized-command fallback.
 ADMIN_BUTTON_LABELS = {
     BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_BUYERS,
     BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_MAINTENANCE,
@@ -1518,15 +1374,8 @@ ADMIN_BUTTON_LABELS = {
     BTN_MAINT_ON, BTN_MAINT_OFF,
 }
 
-CONFIRM_REPLY_KEYBOARD = {
-    'keyboard': [[{'text': '🚫 បោះបង់'}, {'text': '✅ យល់ព្រម'}]],
-    'resize_keyboard': True,
-    'one_time_keyboard': True
-}
-
-
+# ── Admin menu helpers ────────────────────────────────────────────────────────
 def send_admin_settings_menu(chat_id):
-    """Open the admin settings reply keyboard."""
     send_message(
         chat_id,
         "<b>⚙️ ការកំណត់ Admin</b>\n\nសូមជ្រើសរើសប្រតិបត្តិការខាងក្រោម៖",
@@ -1535,9 +1384,7 @@ def send_admin_settings_menu(chat_id):
         reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD
     )
 
-
 def _prompt_admin_input(chat_id, user_id, key, prompt_text):
-    """Put the admin into an input-waiting state and send a prompt message."""
     with _data_lock:
         user_sessions[user_id] = {'state': f'admin_input:{key}'}
     save_sessions_async()
@@ -1549,9 +1396,7 @@ def _prompt_admin_input(chat_id, user_id, key, prompt_text):
         reply_markup=CANCEL_INPUT_KEYBOARD
     )
 
-
 def _show_users_list_inline(chat_id):
-    """Export the known users list as a TXT file."""
     try:
         backfill_known_user_profiles()
     except Exception as e:
@@ -1565,53 +1410,36 @@ def _show_users_list_inline(chat_id):
     except Exception as e:
         logger.error(f"Failed to load known users: {e}")
         rows = []
-    back_keyboard = {
-        'keyboard': [[{'text': BTN_BACK_SETTINGS}]],
-        'resize_keyboard': True,
-        'is_persistent': True,
-    }
+    back_keyboard = {'keyboard': [[{'text': BTN_BACK_SETTINGS}]], 'resize_keyboard': True, 'is_persistent': True}
     if not rows:
         send_message(chat_id, "📭 <b>មិនទាន់មានអ្នកប្រើប្រាស់ទេ។</b>",
-                     parse_mode="HTML", reply_to_message_id=False,
-                     reply_markup=back_keyboard)
+                     parse_mode="HTML", reply_to_message_id=False, reply_markup=back_keyboard)
         return
     total = len(rows)
     lines = [f"👥 អ្នកប្រើប្រាស់សរុប: {total}", ""]
     for i, row in enumerate(rows, 1):
-        first = row.get('first_name') or ''
-        last = row.get('last_name') or ''
+        first    = row.get('first_name') or ''
+        last     = row.get('last_name') or ''
         full_name = f"{first} {last}".strip() or 'N/A'
-        uname = row.get('username') or ''
+        uname    = row.get('username') or ''
         uname_str = f"@{uname}" if uname else '—'
-        uid = row.get('user_id')
+        uid      = row.get('user_id')
         lines.append(f"{i}. {full_name}")
         lines.append(f"   🔖 {uname_str}")
         lines.append(f"   🪪 {uid}")
         lines.append("")
-    txt = "\n".join(lines).encode('utf-8')
+    txt      = "\n".join(lines).encode('utf-8')
     import datetime as _dt
     filename = f"users_{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
-    files = {'document': (filename, txt, 'text/plain; charset=utf-8')}
-    data = {'chat_id': chat_id, 'caption': f"👥 បញ្ជីអ្នកប្រើប្រាស់ — {total} នាក់"}
-    try:
-        resp = http.post(f"{API_URL}/sendDocument", data=data, files=files, timeout=30)
-        if resp.status_code >= 400 or not resp.json().get('ok'):
-            logger.error(f"sendDocument users failed: {resp.text}")
-            send_message(chat_id, "❌ បរាជ័យក្នុងការផ្ញើ​ឯកសារ", reply_to_message_id=False,
-                         reply_markup=back_keyboard)
-            return
-    except Exception as e:
-        logger.error(f"users export failed: {e}")
-        send_message(chat_id, f"❌ Error: <code>{html.escape(str(e))}</code>",
-                     parse_mode="HTML", reply_to_message_id=False,
-                     reply_markup=back_keyboard)
+    result   = _send_document_bytes(chat_id, txt, filename, caption=f"👥 បញ្ជីអ្នកប្រើប្រាស់ — {total} នាក់")
+    if not result:
+        send_message(chat_id, "❌ បរាជ័យក្នុងការផ្ញើ​ឯកសារ",
+                     reply_to_message_id=False, reply_markup=back_keyboard)
         return
-    send_message(chat_id, "↩️ ជ្រើសរើសខាងក្រោម៖", reply_to_message_id=False,
-                 reply_markup=back_keyboard)
-
+    send_message(chat_id, "↩️ ជ្រើសរើសខាងក្រោម៖",
+                 reply_to_message_id=False, reply_markup=back_keyboard)
 
 def _show_delete_type_menu_inline(chat_id, user_id=None):
-    """Show a reply keyboard of account types to delete (only types with stock)."""
     types = [
         t for t in accounts_data.get('account_types', {}).keys()
         if len(accounts_data['account_types'].get(t, [])) > 0
@@ -1630,24 +1458,15 @@ def _show_delete_type_menu_inline(chat_id, user_id=None):
         rows.append([{'text': label}])
         labels_map[label] = t
     rows.append([{'text': BTN_BACK_SETTINGS}])
-    reply_keyboard = {
-        'keyboard': rows,
-        'resize_keyboard': True,
-        'is_persistent': True,
-    }
+    reply_keyboard = {'keyboard': rows, 'resize_keyboard': True, 'is_persistent': True}
     uid = user_id if user_id is not None else chat_id
     with _data_lock:
-        user_sessions[uid] = {
-            'state': 'delete_type_select',
-            'labels': labels_map,
-        }
+        user_sessions[uid] = {'state': 'delete_type_select', 'labels': labels_map}
     save_sessions_async()
     send_message(chat_id, "🗑 <b>ជ្រើសរើសប្រភេទ Account ដែលចង់លុប៖</b>",
                  parse_mode="HTML", reply_to_message_id=False, reply_markup=reply_keyboard)
 
-
 def _export_buyers_report_inline(chat_id):
-    """Export buyers TXT report (same logic as the /buyers command)."""
     try:
         r = _neon_query(
             "SELECT ph.user_id, ph.account_type, ph.quantity, ph.total_price, "
@@ -1666,17 +1485,17 @@ def _export_buyers_report_inline(chat_id):
             uid = str(row.get('user_id'))
             grouped.setdefault(uid, {
                 'first_name': row.get('first_name') or '',
-                'last_name': row.get('last_name') or '',
-                'username': row.get('username') or '',
-                'purchases': []
+                'last_name':  row.get('last_name') or '',
+                'username':   row.get('username') or '',
+                'purchases':  []
             })
-            accounts = row.get('accounts') or []
-            if isinstance(accounts, str):
+            accs = row.get('accounts') or []
+            if isinstance(accs, str):
                 try:
-                    accounts = json.loads(accounts)
+                    accs = json.loads(accs)
                 except Exception:
-                    accounts = []
-            emails = [str(a.get('email', '')) for a in accounts if isinstance(a, dict) and a.get('email')]
+                    accs = []
+            emails = [str(a.get('email', '')) for a in accs if isinstance(a, dict) and a.get('email')]
             grouped[uid]['purchases'].append({
                 'type': row.get('account_type') or '',
                 'qty': row.get('quantity') or 0,
@@ -1690,7 +1509,7 @@ def _export_buyers_report_inline(chat_id):
         for uid, info in grouped.items():
             full_name = (info['first_name'] + ' ' + info['last_name']).strip() or '(no name)'
             seen_emails = set()
-            all_emails = []
+            all_emails  = []
             for p in info['purchases']:
                 for em in p['emails']:
                     if em.lower() not in seen_emails:
@@ -1706,67 +1525,56 @@ def _export_buyers_report_inline(chat_id):
             else:
                 lines.append("—")
             lines.append("")
-        txt = "\n".join(lines).encode('utf-8')
+        txt      = "\n".join(lines).encode('utf-8')
         filename = f"buyers_{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%d_%H%M%S')}.txt"
-        files = {'document': (filename, txt, 'text/plain')}
-        data = {'chat_id': chat_id, 'caption': f"📋 របាយការណ៍ទិញ — {len(grouped)} នាក់, {total_coupons} គូប៉ុង"}
-        resp = http.post(f"{API_URL}/sendDocument", data=data, files=files, timeout=30)
-        if resp.status_code >= 400 or not resp.json().get('ok'):
-            logger.error(f"sendDocument failed: {resp.text}")
+        result   = _send_document_bytes(
+            chat_id, txt, filename,
+            caption=f"📋 របាយការណ៍ទិញ — {len(grouped)} នាក់, {total_coupons} គូប៉ុង"
+        )
+        if not result:
             send_message(chat_id, "❌ បរាជ័យក្នុងការផ្ញើ​ឯកសារ", reply_to_message_id=False)
         else:
-            send_message(chat_id, "↩️ ត្រឡប់ទៅកំណត់", reply_to_message_id=False,
-                         reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+            send_message(chat_id, "↩️ ត្រឡប់ទៅកំណត់",
+                         reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
     except Exception as e:
         logger.error(f"buyers export failed: {e}")
-        send_message(chat_id, f"❌ Error: <code>{html.escape(str(e))}</code>", parse_mode="HTML", reply_to_message_id=False)
-
+        send_message(chat_id, f"❌ Error: <code>{html.escape(str(e))}</code>",
+                     parse_mode="HTML", reply_to_message_id=False)
 
 def _show_admins_inline(chat_id):
-    """Show current admins with the admins reply submenu."""
     extras = sorted(EXTRA_ADMIN_IDS)
     extras_str = "\n".join(f"• <code>{x}</code>" for x in extras) if extras else "(គ្មាន)"
     text_msg = (
         f"👑 <b>Admin បឋម៖</b> <code>{ADMIN_ID}</code>\n\n"
         f"➕ <b>Admin បន្ថែម៖</b>\n{extras_str}"
     )
-    send_message(chat_id, text_msg, parse_mode="HTML", reply_to_message_id=False,
-                 reply_markup=ADMINS_SUBMENU_KEYBOARD)
-
+    send_message(chat_id, text_msg, parse_mode="HTML",
+                 reply_to_message_id=False, reply_markup=ADMINS_SUBMENU_KEYBOARD)
 
 def _show_channel_inline(chat_id):
-    """Show current channel id with the channel reply submenu."""
-    current = CHANNEL_ID if CHANNEL_ID else "(មិនទាន់កំណត់)"
+    current  = CHANNEL_ID if CHANNEL_ID else "(មិនទាន់កំណត់)"
     text_msg = f"📢 <b>Channel ID បច្ចុប្បន្ន៖</b>\n<code>{html.escape(str(current))}</code>"
-    send_message(chat_id, text_msg, parse_mode="HTML", reply_to_message_id=False,
-                 reply_markup=CHANNEL_SUBMENU_KEYBOARD)
-
+    send_message(chat_id, text_msg, parse_mode="HTML",
+                 reply_to_message_id=False, reply_markup=CHANNEL_SUBMENU_KEYBOARD)
 
 def _show_payment_inline(chat_id):
-    """Show current payment name with the payment reply submenu."""
     text_msg = f"💳 <b>ឈ្មោះ Payment បច្ចុប្បន្ន៖</b>\n<code>{html.escape(PAYMENT_NAME or '(មិនទាន់កំណត់)')}</code>"
-    send_message(chat_id, text_msg, parse_mode="HTML", reply_to_message_id=False,
-                 reply_markup=PAYMENT_SUBMENU_KEYBOARD)
-
+    send_message(chat_id, text_msg, parse_mode="HTML",
+                 reply_to_message_id=False, reply_markup=PAYMENT_SUBMENU_KEYBOARD)
 
 def _show_bakong_inline(chat_id):
-    """Show the full bakong token with the bakong reply submenu."""
-    full = BAKONG_TOKEN if BAKONG_TOKEN else "(មិនទាន់កំណត់)"
+    full     = BAKONG_TOKEN if BAKONG_TOKEN else "(មិនទាន់កំណត់)"
     text_msg = f"🔑 <b>Bakong Token បច្ចុប្បន្ន៖</b>\n<code>{html.escape(full)}</code>"
-    send_message(chat_id, text_msg, parse_mode="HTML", reply_to_message_id=False,
-                 reply_markup=BAKONG_SUBMENU_KEYBOARD)
-
+    send_message(chat_id, text_msg, parse_mode="HTML",
+                 reply_to_message_id=False, reply_markup=BAKONG_SUBMENU_KEYBOARD)
 
 def _show_maintenance_inline(chat_id):
-    """Show bot on/off status with the maintenance reply submenu."""
-    status = "🔴 បិទ" if MAINTENANCE_MODE else "🟢 បើក"
+    status   = "🔴 បិទ" if MAINTENANCE_MODE else "🟢 បើក"
     text_msg = f"🛠 <b>ស្ថានភាព Bot បច្ចុប្បន្ន៖</b> {status}"
-    send_message(chat_id, text_msg, parse_mode="HTML", reply_to_message_id=False,
-                 reply_markup=MAINTENANCE_SUBMENU_KEYBOARD)
-
+    send_message(chat_id, text_msg, parse_mode="HTML",
+                 reply_to_message_id=False, reply_markup=MAINTENANCE_SUBMENU_KEYBOARD)
 
 def _start_add_account_flow(chat_id, user_id, message_id):
-    """Start the add-account session."""
     with _data_lock:
         user_sessions[user_id] = {'state': 'waiting_for_accounts'}
     save_sessions_async()
@@ -1778,25 +1586,20 @@ def _start_add_account_flow(chat_id, user_id, message_id):
         reply_markup=ADD_ACCOUNT_KEYBOARD
     )
 
-
 def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
-    """Apply pending admin-settings input from the keyboard menu.
-
-    Returns True if the input was consumed, False otherwise.
-    """
     global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS
 
-    raw = (text or '').strip()
+    raw          = (text or '').strip()
     cancel_words = {'បោះបង់', '🚫 បោះបង់'}
     if raw in cancel_words:
         with _data_lock:
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(chat_id, "🚫 បានបោះបង់ការកំណត់", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+        send_message(chat_id, "🚫 បានបោះបង់ការកំណត់",
+                     reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
         return True
 
-    # ↩️ Back-to-settings button: cancel input and return to settings menu
     if raw == BTN_BACK_SETTINGS:
         with _data_lock:
             if user_id in user_sessions:
@@ -1830,7 +1633,7 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                          parse_mode="HTML", reply_to_message_id=False)
             return True
         BAKONG_TOKEN = raw
-        khqr_client = new_client
+        khqr_client  = new_client
         set_setting('BAKONG_TOKEN', raw)
         delete_message_async(chat_id, message_id)
         with _data_lock:
@@ -1846,7 +1649,8 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
 
     if key == 'channel':
         if not raw:
-            send_message(chat_id, "សូមផ្ញើ Channel ID ថ្មី (ឧ. <code>-1001234567890</code>) ឬ <code>off</code> ដើម្បីបិទ",
+            send_message(chat_id,
+                         "សូមផ្ញើ Channel ID ថ្មី (ឧ. <code>-1001234567890</code>) ឬ <code>off</code> ដើម្បីបិទ",
                          parse_mode="HTML", reply_to_message_id=False)
             return True
         if raw.lower() in ('off', 'none', 'clear', 'delete', 'remove'):
@@ -1856,7 +1660,8 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                 if user_id in user_sessions:
                     del user_sessions[user_id]
             save_sessions_async()
-            send_message(chat_id, "✅ បានលុប Channel ID", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+            send_message(chat_id, "✅ បានលុប Channel ID",
+                         reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
             return True
         CHANNEL_ID = raw
         set_setting('TELEGRAM_CHANNEL_ID', raw)
@@ -1880,7 +1685,8 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             send_message(chat_id, "❌ user_id ត្រូវតែជាលេខ (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
             return True
         if target_id == ADMIN_ID:
-            send_message(chat_id, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+            send_message(chat_id, "ℹ️ Admin បឋមមិនអាចលុប/បន្ថែមបានទេ។",
+                         reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
             with _data_lock:
                 if user_id in user_sessions:
                     del user_sessions[user_id]
@@ -1897,17 +1703,14 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
-        send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+        send_message(chat_id, msg, parse_mode="HTML",
+                     reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
         return True
 
     if key == 'broadcast':
         if not message_id:
-            send_message(chat_id, "សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ (ឬចុច 🚫 បោះបង់)",
-                         reply_to_message_id=False)
+            send_message(chat_id, "សូមផ្ញើ​សារ​ដែល​ចង់​ផ្សាយ (ឬចុច 🚫 បោះបង់)", reply_to_message_id=False)
             return True
-        # Plain-text messages are copied (no "Forwarded from" tag);
-        # media messages (photos, videos, files, etc.) are forwarded so the
-        # admin attribution is preserved.
         is_text_only = bool(raw)
         with _data_lock:
             user_sessions[user_id] = {
@@ -1921,67 +1724,54 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
             chat_id,
             "❓ <b>តើ​អ្នក​ប្រាកដ​ជា​ចង់​ផ្សាយ​សារ​ខាង​លើ​នេះ​ទៅ​អ្នក​ប្រើ​ប្រាស់​ទាំង​អស់​មែន​ទេ?</b>\n\n"
             "ចុច <b>✅ បញ្ជាក់ផ្សាយ</b> ដើម្បី​ផ្សាយ ឬ <b>🚫 បោះបង់ការផ្សាយ</b> ដើម្បី​បោះបង់។",
-            parse_mode="HTML",
-            reply_to_message_id=False,
-            reply_markup=BROADCAST_CONFIRM_KEYBOARD
+            parse_mode="HTML", reply_to_message_id=False, reply_markup=BROADCAST_CONFIRM_KEYBOARD
         )
         return True
 
     return False
 
-
 def _run_broadcast(admin_chat_id, source_message_id, use_copy=False):
-    """Send the admin's original message to every known user, preserving its
-    original formatting (entities, photos, captions, etc.).
-
-    When use_copy=True the bot uses copyMessage so recipients see a clean message
-    with no "Forwarded from" attribution (used for plain text broadcasts).
-    Otherwise it uses forwardMessage so the admin attribution is preserved
-    (used for media broadcasts). Runs in background."""
+    """Broadcast a message to all known users via Pyrogram copy/forward."""
     try:
         try:
             r = _neon_query("SELECT user_id FROM bot_known_users")
             rows = r.get('rows', []) or []
         except Exception as e:
             logger.error(f"Broadcast: failed to load users: {e}")
-            send_message(admin_chat_id, f"❌ មិន​អាច​ផ្ទុក​បញ្ជី​អ្នក​ប្រើ​ប្រាស់​បាន: <code>{html.escape(str(e))}</code>",
+            send_message(admin_chat_id,
+                         f"❌ មិន​អាច​ផ្ទុក​បញ្ជី​អ្នក​ប្រើ​ប្រាស់​បាន: <code>{html.escape(str(e))}</code>",
                          parse_mode="HTML", reply_to_message_id=False,
                          reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
             return
         total = len(rows)
-        sent = 0
-        failed = 0
-        blocked = 0
+        sent = failed = blocked = 0
         for row in rows:
             uid = row.get('user_id')
             if not uid:
                 continue
             try:
-                api_method = 'copyMessage' if use_copy else 'forwardMessage'
-                resp = http.post(
-                    f"{API_URL}/{api_method}",
-                    data={
-                        'chat_id': uid,
-                        'from_chat_id': admin_chat_id,
-                        'message_id': source_message_id,
-                        'protect_content': 'false',
-                    },
-                    timeout=15
-                )
-                if resp.status_code == 200 and resp.json().get('ok'):
+                if use_copy:
+                    result = _pyro_sync(
+                        app.copy_message(uid, admin_chat_id, source_message_id),
+                        timeout=15, reraise=True
+                    )
+                else:
+                    result = _pyro_sync(
+                        app.forward_messages(uid, admin_chat_id, source_message_id),
+                        timeout=15, reraise=True
+                    )
+                if result:
                     sent += 1
                 else:
-                    body = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
-                    desc = (body or {}).get('description', '')
-                    if 'blocked' in desc.lower() or 'deactivated' in desc.lower() or 'chat not found' in desc.lower():
-                        blocked += 1
-                    else:
-                        failed += 1
-                        logger.warning(f"Broadcast to {uid} failed: {resp.status_code} {desc}")
+                    failed += 1
             except Exception as e:
-                failed += 1
-                logger.warning(f"Broadcast to {uid} error: {e}")
-            # Telegram limit ~30 msg/sec; sleep to stay safely under
+                err = str(e).lower()
+                if any(w in err for w in ('blocked', 'deactivated', 'invalid', 'forbidden',
+                                          'peer', 'not found', 'chat not found')):
+                    blocked += 1
+                else:
+                    failed += 1
+                    logger.warning(f"Broadcast to {uid} error: {e}")
             time.sleep(0.05)
         summary = (
             "📢 <b>ផ្សាយ​សារ​បាន​ចប់</b>\n"
@@ -1992,20 +1782,26 @@ def _run_broadcast(admin_chat_id, source_message_id, use_copy=False):
             f"❌ បរាជ័យ:        {failed}"
         )
         send_message(admin_chat_id, summary, parse_mode="HTML",
-                     reply_to_message_id=False,
-                     reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                     reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
     except Exception as e:
         logger.error(f"Broadcast crashed: {e}")
         try:
-            send_message(admin_chat_id, f"❌ Broadcast error: <code>{html.escape(str(e))}</code>",
+            send_message(admin_chat_id,
+                         f"❌ Broadcast error: <code>{html.escape(str(e))}</code>",
                          parse_mode="HTML", reply_to_message_id=False,
                          reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
         except Exception:
             pass
 
+# ── QR / payment flow helpers ─────────────────────────────────────────────────
+CHECK_PAYMENT_KEYBOARD = {
+    'inline_keyboard': [[
+        {'text': '🚫 បោះបង់', 'callback_data': 'cancel_purchase'},
+        {'text': '✅ ពិនិត្យការបង់ប្រាក់', 'callback_data': 'check_payment'}
+    ]]
+}
 
 def _generate_and_send_qr(chat_id, user_id, session):
-    """Generate KHQR and send to user immediately."""
     try:
         img_bytes, md5_or_err, qr_string = generate_payment_qr(session['total_price'])
         if not img_bytes:
@@ -2040,52 +1836,124 @@ def _generate_and_send_qr(chat_id, user_id, session):
                 del user_sessions[user_id]
         save_sessions_async()
 
-
 def _remind_pending_payment(chat_id, session):
-    """Resend the KHQR photo with buttons and a reminder text."""
     photo_msg_id = session.get('photo_message_id') or session.get('qr_message_id')
     if photo_msg_id:
         copy_message(chat_id, chat_id, photo_msg_id, reply_markup=CHECK_PAYMENT_KEYBOARD)
     else:
-        send_message(chat_id, "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។", reply_to_message_id=False)
-
+        send_message(chat_id,
+                     "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។",
+                     reply_to_message_id=False)
 
 def send_purchase_notification(message):
-    """Send successful payment notification to channel only.
-    Falls back to admin private chat if no channel is configured."""
     if CHANNEL_ID:
-        send_message(CHANNEL_ID, message, parse_mode="HTML", reply_to_message_id=False, reply_markup="no_keyboard")
+        send_message(CHANNEL_ID, message, parse_mode="HTML",
+                     reply_to_message_id=False, reply_markup="no_keyboard")
     else:
-        send_message(ADMIN_ID, message, parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_REPLY_KEYBOARD)
+        send_message(ADMIN_ID, message, parse_mode="HTML",
+                     reply_to_message_id=False, reply_markup=ADMIN_REPLY_KEYBOARD)
 
+# ── Deliver accounts after confirmed payment ───────────────────────────────────
+def deliver_accounts(chat_id, user_id, session, payment_data=None, user_name=''):
+    account_type = session['account_type']
+    quantity     = session['quantity']
 
+    photo_message_id = session.get('photo_message_id')
+    if photo_message_id:
+        delete_message_async(chat_id, photo_message_id)
+    qr_message_id = session.get('qr_message_id')
+    if qr_message_id:
+        delete_message_async(chat_id, qr_message_id)
+
+    with _data_lock:
+        if account_type not in accounts_data['account_types']:
+            available_count     = None
+            delivered_accounts  = None
+        else:
+            available_accounts  = accounts_data['account_types'][account_type]
+            available_count     = len(available_accounts)
+            if available_count < quantity:
+                delivered_accounts = None
+            else:
+                delivered_accounts = available_accounts[:quantity]
+                accounts_data['account_types'][account_type] = available_accounts[quantity:]
+                if user_id in user_sessions:
+                    del user_sessions[user_id]
+
+    if delivered_accounts is None:
+        if available_count is None:
+            send_message(chat_id, f"❌ *មានបញ្ហា!*\n\nគ្មាន Account ប្រភេទ {account_type} ក្នុងស្តុក។",
+                         parse_mode="Markdown")
+        else:
+            send_message(chat_id, f"❌ *មានបញ្ហា!*\n\nសុំទោស! មានត្រឹមតែ {available_count} Accounts នៅក្នុងស្តុក។",
+                         parse_mode="Markdown")
+        return
+
+    save_data()
+    save_purchase_history_async(user_id, account_type, quantity,
+                                session.get('total_price', 0), delivered_accounts)
+
+    accounts_message = f'<tg-emoji emoji-id="5436040291507247633">🎉</tg-emoji> <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\n'
+    accounts_message += '<b>គូប៉ុងរបស់អ្នក៖ <tg-emoji emoji-id="5470177992950946662">👇</tg-emoji></b>\n\n'
+    for account in delivered_accounts:
+        if 'email' in account:
+            accounts_message += f"{account['email']}\n"
+        else:
+            accounts_message += f"{account.get('phone', '')} | {account.get('password', '')}\n"
+    accounts_message += f"\n<i>សូមអរគុណសម្រាប់ការទិញ <tg-emoji emoji-id=\"5897474556834091884\">🙏</tg-emoji></i>"
+
+    send_message(chat_id, accounts_message, parse_mode="HTML",
+                 message_effect_id="5046509860389126442", reply_markup=_main_kb(user_id))
+    send_account_selection_inline(chat_id)
+
+    try:
+        import datetime
+        cambodia_tz = datetime.timezone(datetime.timedelta(hours=7))
+        now_str     = datetime.datetime.now(cambodia_tz).strftime("%d/%m/%Y %H:%M")
+        pd          = payment_data or {}
+        from_account = pd.get('fromAccountId') or pd.get('hash') or 'N/A'
+        memo         = pd.get('memo') or 'គ្មាន'
+        ref          = pd.get('externalRef') or pd.get('transactionId') or pd.get('md5') or 'N/A'
+        amount       = session.get('total_price', 0)
+        buyer_label  = f"{user_name} ({user_id})" if user_name else str(user_id)
+        admin_msg = (
+            "🎉 ទទួលបានការបង់ប្រាក់ជោគជ័យ\n"
+            "━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 ឈ្មោះអ្នកទិញ(ID): {buyer_label}\n"
+            f"💵 ទឹកប្រាក់: {amount} USD\n"
+            f"👤 ពីធនាគារ: {from_account}\n"
+            f"📝 ចំណាំ: {memo}\n"
+            f"🧾 លេខយោង: {ref}\n"
+            f"⏰ ម៉ោង: {now_str}"
+        )
+        send_purchase_notification(admin_msg)
+    except Exception as e:
+        logger.error(f"Failed to send admin payment notification: {e}")
+
+    save_sessions_async()
+    logger.info(f"Payment confirmed and {quantity} accounts delivered to user {user_id}")
+
+# ── Callback query handler ────────────────────────────────────────────────────
 def handle_callback_query(update):
-    """Handle callback query (inline button clicks)."""
     _set_reply_to_id(None)
     try:
         callback_query = update.get('callback_query')
         if not callback_query:
             return
-        
-        chat_id = callback_query['message']['chat']['id']
+        chat_id       = callback_query['message']['chat']['id']
         callback_data = callback_query.get('data')
-        user = callback_query.get('from', {})
-        user_id = user.get('id')
-        
+        user          = callback_query.get('from', {})
+        user_id       = user.get('id')
         logger.info(f"Received callback from user {user.get('first_name', 'Unknown')} (ID: {user_id}): {callback_data}")
-
         notify_admin_new_user(user)
-        
-        # Handle buy button clicks with reply quote functionality
+
         if callback_data.startswith('buy:') or callback_data.startswith('buy_'):
-            # Block new purchase if one is already pending payment
             existing_session = user_sessions.get(user_id)
             if existing_session and existing_session.get('state') == 'payment_pending':
                 answer_callback(callback_query['id'])
                 delete_message_async(chat_id, callback_query['message']['message_id'])
                 _remind_pending_payment(chat_id, existing_session)
                 return
-
             if callback_data.startswith('buy:'):
                 account_type = _account_type_from_callback_id(callback_data[4:])
             else:
@@ -2093,16 +1961,13 @@ def handle_callback_query(update):
             if not account_type:
                 answer_callback(callback_query['id'], 'ប្រភេទនេះមិនមានទៀតហើយ។ សូមចាប់ផ្តើមម្តងទៀត។', True)
                 return
-            # Check if account type exists and has stock
             if account_type in accounts_data['account_types']:
                 with _data_lock:
-                    accounts = accounts_data['account_types'][account_type]
-                    count = len(accounts)
-                    price = accounts_data['prices'].get(account_type, 0)
-                
+                    accounts  = accounts_data['account_types'][account_type]
+                    count     = len(accounts)
+                    price     = accounts_data['prices'].get(account_type, 0)
                 if count > 0:
                     answer_callback(callback_query['id'])
-                    # Always allow user to select account type (reset any existing session)
                     with _data_lock:
                         user_sessions[user_id] = {
                             'state': 'waiting_for_quantity',
@@ -2111,31 +1976,21 @@ def handle_callback_query(update):
                             'available_count': count
                         }
                     save_sessions_async()
-                    
-                    # Create regular message without reply quote
-                    reply_message = "*សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖*"
-
-                    # Build inline keyboard with all available quantities
                     qty_buttons = [{'text': str(n), 'callback_data': f'qty:{n}'} for n in range(1, count + 1)]
-                    qty_rows = [qty_buttons[i:i+4] for i in range(0, len(qty_buttons), 4)]
+                    qty_rows    = [qty_buttons[i:i+4] for i in range(0, len(qty_buttons), 4)]
                     qty_keyboard = {'inline_keyboard': qty_rows}
-
-                    send_message(chat_id, reply_message, reply_to_message_id=False, parse_mode="Markdown", reply_markup=qty_keyboard)
-                    
-                    # Delete the original message with inline buttons
+                    send_message(chat_id, "*សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖*",
+                                 reply_to_message_id=False, parse_mode="Markdown", reply_markup=qty_keyboard)
                     delete_message_async(chat_id, callback_query['message']['message_id'])
-                    
                     logger.info(f"User {user_id} selected account type {account_type}, waiting for quantity input")
                 else:
                     answer_callback(callback_query['id'], f"សុំទោស! {account_type} អស់ស្តុកហើយ។", True)
-        
-        # Handle out-of-stock button clicks
+
         elif callback_data.startswith('out_of_stock:') or callback_data.startswith('out_of_stock_'):
             answer_callback(callback_query['id'])
             delete_message_async(chat_id, callback_query['message']['message_id'])
             send_account_selection_inline(chat_id)
 
-        # Handle confirm buy — generate QR and proceed to payment
         elif callback_data == 'confirm_buy':
             session = user_sessions.get(user_id)
             if not session or session.get('state') != 'waiting_for_confirmation':
@@ -2144,26 +1999,17 @@ def handle_callback_query(update):
             answer_callback(callback_query['id'], 'កំពុងបង្កើត QR...')
             with _data_lock:
                 session['state'] = 'payment_pending'
-            # Delete the summary message
             summary_message_id = callback_query['message']['message_id']
             delete_message_async(chat_id, summary_message_id)
             try:
                 img_bytes, md5_or_err, qr_string = generate_payment_qr(session['total_price'])
                 if not img_bytes:
                     err_detail = md5_or_err or "មិនដឹងមូលហេតុ"
-                    logger.error(f"QR generation returned None: {err_detail}")
-                    # Notify admin with the actual error
                     if str(user_id) == str(ADMIN_ID):
-                        send_message(chat_id,
-                            f"❌ *QR បរាជ័យ (Admin Debug):*\n`{err_detail}`",
-                            parse_mode="Markdown")
+                        send_message(chat_id, f"❌ *QR បរាជ័យ (Admin Debug):*\n`{err_detail}`", parse_mode="Markdown")
                     else:
-                        send_message(chat_id,
-                            "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។",
-                            parse_mode="Markdown")
-                        send_message(ADMIN_ID,
-                            f"⚠️ *QR Error (user {user_id}):*\n`{err_detail}`",
-                            parse_mode="Markdown")
+                        send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
+                        send_message(ADMIN_ID, f"⚠️ *QR Error (user {user_id}):*\n`{err_detail}`", parse_mode="Markdown")
                     with _data_lock:
                         if user_id in user_sessions:
                             del user_sessions[user_id]
@@ -2192,19 +2038,18 @@ def handle_callback_query(update):
                 save_sessions_async()
             return
 
-        # Admin: delete type — step 1: show confirmation
         elif callback_data.startswith('dts:') and is_admin(user_id):
             type_name = _account_type_from_callback_id(callback_data[4:]) or callback_data[4:]
             if type_name not in accounts_data.get('account_types', {}):
                 answer_callback(callback_query['id'], 'ប្រភេទនេះមិនមានទៀតហើយ!', True)
                 return
             answer_callback(callback_query['id'])
-            count = len(accounts_data['account_types'].get(type_name, []))
-            price = accounts_data.get('prices', {}).get(type_name, 0)
+            count    = len(accounts_data['account_types'].get(type_name, []))
+            price    = accounts_data.get('prices', {}).get(type_name, 0)
             confirm_cb = f"dtc:{_type_callback_id(type_name)}"
             keyboard = {'inline_keyboard': [[
                 {'text': '✅ បញ្ជាក់លុប', 'callback_data': confirm_cb},
-                {'text': '🚫 បោះបង់', 'callback_data': 'dtcancel'}
+                {'text': '🚫 បោះបង់',     'callback_data': 'dtcancel'}
             ]]}
             send_message(chat_id,
                 f"⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ Account នេះមែនទេ?</b>\n\n"
@@ -2213,7 +2058,6 @@ def handle_callback_query(update):
                 parse_mode="HTML", reply_to_message_id=None, reply_markup=keyboard)
             return
 
-        # Admin: delete type — step 2: confirmed, perform deletion
         elif callback_data.startswith('dtc:') and is_admin(user_id):
             type_name = _account_type_from_callback_id(callback_data[4:]) or callback_data[4:]
             if type_name not in accounts_data.get('account_types', {}):
@@ -2222,19 +2066,14 @@ def handle_callback_query(update):
             answer_callback(callback_query['id'])
             count = len(accounts_data['account_types'].pop(type_name, []))
             accounts_data.get('prices', {}).pop(type_name, None)
-            accounts_data['accounts'] = [
-                a for a in accounts_data.get('accounts', [])
-                if a.get('type') != type_name
-            ]
+            accounts_data['accounts'] = [a for a in accounts_data.get('accounts', []) if a.get('type') != type_name]
             save_data()
             delete_message_async(chat_id, callback_query['message']['message_id'])
             send_message(chat_id,
                 f"✅ <b>បានលុបប្រភេទ Account <code>{type_name}</code> ចំនួន {count} records ដោយជោគជ័យ!</b>",
                 parse_mode="HTML", reply_to_message_id=None)
-            logger.info(f"Admin {user_id} deleted account type '{type_name}' ({count} records)")
             return
 
-        # Admin: delete type — cancelled
         elif callback_data == 'dtcancel' and is_admin(user_id):
             answer_callback(callback_query['id'])
             delete_message_async(chat_id, callback_query['message']['message_id'])
@@ -2242,104 +2081,87 @@ def handle_callback_query(update):
                          parse_mode="HTML", reply_to_message_id=None)
             return
 
-        # Admin: settings menu actions (⚙️កំណត់ keyboard)
         elif callback_data.startswith('adm:') and is_admin(user_id):
             global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, MAINTENANCE_MODE
-            action = callback_data[4:]
+            action   = callback_data[4:]
             answer_callback(callback_query['id'])
             menu_msg_id = callback_query['message']['message_id']
 
             if action == 'close':
                 delete_message_async(chat_id, menu_msg_id)
                 return
-
             if action == 'back':
                 delete_message_async(chat_id, menu_msg_id)
                 send_admin_settings_menu(chat_id)
                 return
-
             if action == 'add_account':
                 delete_message_async(chat_id, menu_msg_id)
                 _start_add_account_flow(chat_id, user_id, None)
                 return
-
             if action == 'delete_type':
                 delete_message_async(chat_id, menu_msg_id)
                 _show_delete_type_menu_inline(chat_id, user_id)
                 return
-
             if action == 'users':
                 delete_message_async(chat_id, menu_msg_id)
                 _show_users_list_inline(chat_id)
                 return
-
             if action == 'buyers':
                 delete_message_async(chat_id, menu_msg_id)
                 _export_buyers_report_inline(chat_id)
                 return
-
             if action == 'payment':
                 delete_message_async(chat_id, menu_msg_id)
                 _show_payment_inline(chat_id)
                 return
-
             if action == 'payment_set':
                 delete_message_async(chat_id, menu_msg_id)
                 _prompt_admin_input(chat_id, user_id, 'payment',
-                                    f"💳 ឈ្មោះ Payment បច្ចុប្បន្ន៖ <b>{html.escape(PAYMENT_NAME or '(មិនទាន់កំណត់)')}</b>\n\nសូមផ្ញើឈ្មោះ Payment ថ្មី៖")
+                    f"💳 ឈ្មោះ Payment បច្ចុប្បន្ន៖ <b>{html.escape(PAYMENT_NAME or '(មិនទាន់កំណត់)')}</b>\n\nសូមផ្ញើឈ្មោះ Payment ថ្មី៖")
                 return
-
             if action == 'bakong':
                 delete_message_async(chat_id, menu_msg_id)
                 _show_bakong_inline(chat_id)
                 return
-
             if action == 'bakong_set':
                 delete_message_async(chat_id, menu_msg_id)
                 _prompt_admin_input(chat_id, user_id, 'bakong',
-                                    "🔑 សូមផ្ញើ Bakong Token ថ្មី៖\n<i>(សារនឹងត្រូវលុបដោយស្វ័យប្រវត្តិ)</i>")
+                    "🔑 សូមផ្ញើ Bakong Token ថ្មី៖\n<i>(សារនឹងត្រូវលុបដោយស្វ័យប្រវត្តិ)</i>")
                 return
-
             if action == 'channel':
                 delete_message_async(chat_id, menu_msg_id)
                 _show_channel_inline(chat_id)
                 return
-
             if action == 'channel_set':
                 delete_message_async(chat_id, menu_msg_id)
                 _prompt_admin_input(chat_id, user_id, 'channel',
-                                    "📢 សូមផ្ញើ Channel ID ថ្មី (ឧ. <code>-1001234567890</code>)\nឬ <code>off</code> ដើម្បីលុប")
+                    "📢 សូមផ្ញើ Channel ID ថ្មី (ឧ. <code>-1001234567890</code>)\nឬ <code>off</code> ដើម្បីលុប")
                 return
-
             if action == 'channel_clear':
                 CHANNEL_ID = ""
                 set_setting('TELEGRAM_CHANNEL_ID', '')
                 delete_message_async(chat_id, menu_msg_id)
-                send_message(chat_id, "✅ បានលុប Channel ID", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                send_message(chat_id, "✅ បានលុប Channel ID",
+                             reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                 return
-
             if action == 'admins':
                 delete_message_async(chat_id, menu_msg_id)
                 _show_admins_inline(chat_id)
                 return
-
             if action == 'admin_add':
                 delete_message_async(chat_id, menu_msg_id)
                 _prompt_admin_input(chat_id, user_id, 'admin_add',
-                                    "👑 សូមផ្ញើ user_id របស់អ្នកដែលចង់បន្ថែមជា admin (ជាលេខ)៖")
+                    "👑 សូមផ្ញើ user_id របស់អ្នកដែលចង់បន្ថែមជា admin (ជាលេខ)៖")
                 return
-
             if action == 'admin_remove':
                 delete_message_async(chat_id, menu_msg_id)
                 _prompt_admin_input(chat_id, user_id, 'admin_remove',
-                                    "👑 សូមផ្ញើ user_id របស់ admin ដែលចង់ដក (ជាលេខ)៖")
+                    "👑 សូមផ្ញើ user_id របស់ admin ដែលចង់ដក (ជាលេខ)៖")
                 return
-
             if action == 'maintenance':
                 delete_message_async(chat_id, menu_msg_id)
                 _show_maintenance_inline(chat_id)
                 return
-
             if action == 'maint_on':
                 MAINTENANCE_MODE = True
                 set_setting('MAINTENANCE_MODE', 'true')
@@ -2347,7 +2169,6 @@ def handle_callback_query(update):
                 send_message(chat_id, "✅ <b>Maintenance mode ON</b>", parse_mode="HTML",
                              reply_to_message_id=False, reply_markup=_main_kb(user_id))
                 return
-
             if action == 'maint_off':
                 MAINTENANCE_MODE = False
                 set_setting('MAINTENANCE_MODE', 'false')
@@ -2355,10 +2176,8 @@ def handle_callback_query(update):
                 send_message(chat_id, "✅ <b>Maintenance mode OFF</b> — Bot ដំណើរការធម្មតាហើយ",
                              parse_mode="HTML", reply_to_message_id=False, reply_markup=_main_kb(user_id))
                 return
-
             return
 
-        # Handle cancel buy — cancel from summary screen (before QR)
         elif callback_data == 'cancel_buy':
             answer_callback(callback_query['id'])
             with _data_lock:
@@ -2370,7 +2189,6 @@ def handle_callback_query(update):
             send_account_selection_inline(chat_id)
             return
 
-        # Handle quantity number button press
         elif callback_data.startswith('qty:'):
             session = user_sessions.get(user_id)
             if not session or session.get('state') != 'waiting_for_quantity':
@@ -2385,26 +2203,22 @@ def handle_callback_query(update):
                 delete_message_async(chat_id, callback_query['message']['message_id'])
                 send_account_selection_inline(chat_id)
                 return
-
             if quantity > session['available_count']:
                 answer_callback(callback_query['id'])
                 delete_message_async(chat_id, callback_query['message']['message_id'])
                 send_account_selection_inline(chat_id)
                 return
-
             total_price = quantity * session['price']
             with _data_lock:
-                session['quantity'] = quantity
+                session['quantity']    = quantity
                 session['total_price'] = total_price
-                session['state'] = 'payment_pending'
+                session['state']       = 'payment_pending'
             save_sessions_async()
-
             answer_callback(callback_query['id'], 'កំពុងបង្កើត QR...')
             delete_message_async(chat_id, callback_query['message']['message_id'])
             _generate_and_send_qr(chat_id, user_id, session)
             return
 
-        # Handle check payment button
         elif callback_data == 'check_payment':
             session = user_sessions.get(user_id)
             if not session or session.get('state') != 'payment_pending':
@@ -2414,8 +2228,6 @@ def handle_callback_query(update):
                 delete_message_async(chat_id, callback_query['message']['message_id'])
                 send_account_selection_inline(chat_id)
                 return
-
-            # Check payment status
             md5 = session.get('md5_hash')
             if not md5:
                 answer_callback(callback_query['id'])
@@ -2433,9 +2245,7 @@ def handle_callback_query(update):
                 answer_callback(callback_query['id'], '⏳ មិនទាន់បានទទួលការបង់ប្រាក់។ សូមព្យាយាមម្តងទៀត។', True)
             return
 
-        # Handle cancel purchase
         elif callback_data == 'cancel_purchase':
-            # Check payment status once before cancelling
             session = user_sessions.get(user_id)
             if not session or session.get('state') != 'payment_pending':
                 session = get_pending_payment(user_id)
@@ -2450,7 +2260,6 @@ def handle_callback_query(update):
                     save_sessions_async()
                     return
             answer_callback(callback_query['id'])
-            # No payment found — proceed with cancellation
             btn_message_id = callback_query['message']['message_id']
             delete_message_async(chat_id, btn_message_id)
             if session:
@@ -2468,46 +2277,39 @@ def handle_callback_query(update):
     except Exception as e:
         logger.error(f"Error handling callback query: {e}")
 
+# ── Main message handler ──────────────────────────────────────────────────────
 def handle_message(update):
-    """Handle incoming message."""
     global MAINTENANCE_MODE, PAYMENT_NAME, CHANNEL_ID
     try:
-        # Handle callback queries first
         if 'callback_query' in update:
             handle_callback_query(update)
             return
-
         if 'channel_post' in update:
             handle_channel_post(update['channel_post'])
             return
-
         if 'edited_channel_post' in update:
             handle_channel_post(update['edited_channel_post'])
             return
-            
-        message = update.get('message')
+
+        message    = update.get('message')
         if not message:
             return
-        
-        chat_id = message['chat']['id']
+        chat_id    = message['chat']['id']
         message_id = message.get('message_id')
-        text = message.get('text', '')
-        user = message.get('from', {})
-        user_id = user.get('id')
-        
-        # Set reply-quote context for all send_message calls in this handler
+        text       = message.get('text', '')
+        user       = message.get('from', {})
+        user_id    = user.get('id')
+
         _set_reply_to_id(message_id)
-
         logger.info(f"Received message from user {user.get('first_name', 'Unknown')} (ID: {user_id}): {text}")
-
         notify_admin_new_user(user)
-        
-        # Function to show account selection interface
+
         def show_account_selection_local():
             show_account_selection(chat_id)
 
         if MAINTENANCE_MODE and not is_admin(user_id):
-            send_message(chat_id, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>", parse_mode="HTML", reply_to_message_id=False)
+            send_message(chat_id, "🔧 <b>Bot កំពុង Update សូមរង់ចាំមួយភ្លែត...</b>",
+                         parse_mode="HTML", reply_to_message_id=False)
             return
 
         if text.strip() == '/start':
@@ -2529,15 +2331,14 @@ def handle_message(update):
             show_account_selection_local()
             return
 
-        # Handle account selection reply keyboard button press
         if text.strip().startswith(ACCOUNT_BTN_PREFIX):
-            raw = text.strip()[len(ACCOUNT_BTN_PREFIX):]
+            raw          = text.strip()[len(ACCOUNT_BTN_PREFIX):]
             account_type = raw.split(ACCOUNT_BTN_SUFFIX)[0]
             if account_type in accounts_data.get('account_types', {}):
                 with _data_lock:
                     accounts = accounts_data['account_types'][account_type]
-                    count = len(accounts)
-                    price = accounts_data['prices'].get(account_type, 0)
+                    count    = len(accounts)
+                    price    = accounts_data['prices'].get(account_type, 0)
                 if count > 0:
                     with _data_lock:
                         user_sessions[user_id] = {
@@ -2547,21 +2348,21 @@ def handle_message(update):
                             'available_count': count
                         }
                     save_sessions_async()
-                    reply_message = "*សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖*"
-                    qty_buttons = [{'text': str(n), 'callback_data': f'qty:{n}'} for n in range(1, count + 1)]
-                    qty_rows = [qty_buttons[i:i+4] for i in range(0, len(qty_buttons), 4)]
+                    qty_buttons  = [{'text': str(n), 'callback_data': f'qty:{n}'} for n in range(1, count + 1)]
+                    qty_rows     = [qty_buttons[i:i+4] for i in range(0, len(qty_buttons), 4)]
                     qty_keyboard = {'inline_keyboard': qty_rows}
-                    send_message(chat_id, reply_message, reply_to_message_id=False, parse_mode="Markdown", reply_markup=qty_keyboard)
-                    logger.info(f"User {user_id} selected account type '{account_type}' via reply keyboard")
+                    send_message(chat_id, "*សូមជ្រើសរើសចំនួនដែលចង់ទិញ៖*",
+                                 reply_to_message_id=False, parse_mode="Markdown", reply_markup=qty_keyboard)
                 else:
-                    send_message(chat_id, f"សូមអភ័យទោស Account {account_type} អស់ពីស្តុក 🪤", reply_markup=_main_kb(user_id))
+                    send_message(chat_id, f"សូមអភ័យទោស Account {account_type} អស់ពីស្តុក 🪤",
+                                 reply_markup=_main_kb(user_id))
                     show_account_selection_local()
             else:
                 show_account_selection_local()
             return
 
         if text.strip() == '👤គណនី':
-            full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or 'N/A'
+            full_name    = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or 'N/A'
             account_info = (
                 f"👤 <b>ឈ្មោះ:</b> {full_name}\n"
                 f'<tg-emoji emoji-id="5422683699130933153">🪪</tg-emoji> <b>ID:</b> <code>{user_id}</code>'
@@ -2579,7 +2380,7 @@ def handle_message(update):
                 send_message(chat_id, "ការទិញចំនួន ២០ ដងចុងក្រោយរបស់អ្នក:")
                 for row in rows:
                     try:
-                        dt = datetime.datetime.fromisoformat(str(row.get('purchased_at', '')).replace('Z', '+00:00'))
+                        dt    = datetime.datetime.fromisoformat(str(row.get('purchased_at', '')).replace('Z', '+00:00'))
                         dt_kh = dt.astimezone(cambodia_tz).strftime("%d/%m/%Y %H:%M")
                     except Exception:
                         dt_kh = str(row.get('purchased_at', ''))
@@ -2608,9 +2409,7 @@ def handle_message(update):
                     send_message(chat_id, msg, parse_mode="HTML", reply_to_message_id=False)
             return
 
-        # Admin: open settings menu via /settings command
         if text.strip() == '/settings' and is_admin(user_id):
-            # Clear any leftover admin_input session so it doesn't capture this press
             if user_id in user_sessions and str(user_sessions[user_id].get('state', '')).startswith('admin_input:'):
                 with _data_lock:
                     del user_sessions[user_id]
@@ -2618,7 +2417,6 @@ def handle_message(update):
             send_admin_settings_menu(chat_id)
             return
 
-        # Admin: handle pending input from the settings menu (payment, bakong, channel, admin add/remove)
         if is_admin(user_id) and user_id in user_sessions:
             _state = str(user_sessions[user_id].get('state', ''))
             if _state.startswith('admin_input:'):
@@ -2626,39 +2424,29 @@ def handle_message(update):
                 if _handle_admin_settings_input(chat_id, user_id, message_id, _key, text):
                     return
 
-            # Admin: handle account-type pick from the delete-type reply keyboard
             if _state == 'delete_type_select':
-                stripped = text.strip()
-                labels = user_sessions[user_id].get('labels', {}) or {}
-                type_name = labels.get(stripped)
+                stripped   = text.strip()
+                labels     = user_sessions[user_id].get('labels', {}) or {}
+                type_name  = labels.get(stripped)
                 if type_name and type_name in accounts_data.get('account_types', {}):
                     count = len(accounts_data['account_types'].get(type_name, []))
                     price = accounts_data.get('prices', {}).get(type_name, 0)
                     with _data_lock:
-                        user_sessions[user_id] = {
-                            'state': 'delete_type_confirm',
-                            'type_name': type_name,
-                        }
+                        user_sessions[user_id] = {'state': 'delete_type_confirm', 'type_name': type_name}
                     save_sessions_async()
                     confirm_kb = {
-                        'keyboard': [
-                            [{'text': BTN_DELETE_CONFIRM}],
-                            [{'text': BTN_DELETE_CANCEL}],
-                        ],
-                        'resize_keyboard': True,
-                        'is_persistent': True,
+                        'keyboard': [[{'text': BTN_DELETE_CONFIRM}], [{'text': BTN_DELETE_CANCEL}]],
+                        'resize_keyboard': True, 'is_persistent': True,
                     }
                     send_message(chat_id,
                         f"⚠️ <b>តើអ្នកពិតជាចង់លុបប្រភេទ Account នេះមែនទេ?</b>\n\n"
                         f"<blockquote>🔹 ប្រភេទ: {html.escape(type_name)}\n🔹 ចំនួន Account: {count}\n🔹 តម្លៃ: ${price}</blockquote>\n\n"
                         f"Account ទាំងអស់ក្នុងប្រភេទនេះនឹងត្រូវបានលុបចោលជាអចិន្ត្រៃយ៍!",
-                        parse_mode="HTML", reply_to_message_id=False,
-                        reply_markup=confirm_kb)
+                        parse_mode="HTML", reply_to_message_id=False, reply_markup=confirm_kb)
                     return
 
-            # Admin: handle confirm/cancel of the delete-type reply keyboard
             if _state == 'delete_type_confirm':
-                stripped = text.strip()
+                stripped  = text.strip()
                 type_name = user_sessions[user_id].get('type_name')
                 if stripped == BTN_DELETE_CONFIRM:
                     with _data_lock:
@@ -2672,16 +2460,11 @@ def handle_message(update):
                         return
                     count = len(accounts_data['account_types'].pop(type_name, []))
                     accounts_data.get('prices', {}).pop(type_name, None)
-                    accounts_data['accounts'] = [
-                        a for a in accounts_data.get('accounts', [])
-                        if a.get('type') != type_name
-                    ]
+                    accounts_data['accounts'] = [a for a in accounts_data.get('accounts', []) if a.get('type') != type_name]
                     save_data()
                     send_message(chat_id,
                         f"✅ <b>បានលុបប្រភេទ Account <code>{html.escape(type_name)}</code> ចំនួន {count} records ដោយជោគជ័យ!</b>",
-                        parse_mode="HTML", reply_to_message_id=False,
-                        reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    logger.info(f"Admin {user_id} deleted account type '{type_name}' ({count} records)")
+                        parse_mode="HTML", reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                     return
                 if stripped == BTN_DELETE_CANCEL:
                     with _data_lock:
@@ -2693,21 +2476,15 @@ def handle_message(update):
                                  reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                     return
 
-
-        # Admin: route reply-keyboard button presses from the settings menu / submenus
         if is_admin(user_id) and text.strip() in ADMIN_BUTTON_LABELS:
             btn = text.strip()
-
-            # ── Top-level settings menu actions ──
             if btn == BTN_BACK_SETTINGS:
-                # Cancel any in-progress admin session before returning to settings
                 if user_id in user_sessions:
                     with _data_lock:
                         del user_sessions[user_id]
                     save_sessions_async()
                 send_admin_settings_menu(chat_id)
                 return
-
             if btn == BTN_ADD_ACCOUNT:
                 _start_add_account_flow(chat_id, user_id, message_id)
                 return
@@ -2729,18 +2506,14 @@ def handle_message(update):
             if btn == BTN_MAINTENANCE:
                 _show_maintenance_inline(chat_id)
                 return
-            # ── Submenu leaf actions ──
             if btn == BTN_PAYMENT_EDIT:
-                _prompt_admin_input(chat_id, user_id, 'payment',
-                    "💳 សូមផ្ញើ <b>ឈ្មោះ Payment</b> ថ្មី (1–60 តួអក្សរ)៖")
+                _prompt_admin_input(chat_id, user_id, 'payment', "💳 សូមផ្ញើ <b>ឈ្មោះ Payment</b> ថ្មី (1–60 តួអក្សរ)៖")
                 return
             if btn == BTN_BAKONG_EDIT:
-                _prompt_admin_input(chat_id, user_id, 'bakong',
-                    "🔑 សូមផ្ញើ <b>Bakong Token</b> ថ្មី៖")
+                _prompt_admin_input(chat_id, user_id, 'bakong', "🔑 សូមផ្ញើ <b>Bakong Token</b> ថ្មី៖")
                 return
             if btn == BTN_CHANNEL_EDIT:
-                _prompt_admin_input(chat_id, user_id, 'channel',
-                    "📢 សូមផ្ញើ <b>Channel ID</b> ថ្មី (លេខ ដូចជា <code>-1001234567890</code>)៖")
+                _prompt_admin_input(chat_id, user_id, 'channel', "📢 សូមផ្ញើ <b>Channel ID</b> ថ្មី (លេខ ដូចជា <code>-1001234567890</code>)៖")
                 return
             if btn == BTN_CHANNEL_CLEAR:
                 CHANNEL_ID = ""
@@ -2749,12 +2522,10 @@ def handle_message(update):
                              reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                 return
             if btn == BTN_ADMIN_ADD:
-                _prompt_admin_input(chat_id, user_id, 'admin_add',
-                    "➕ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់បន្ថែមជា Admin៖")
+                _prompt_admin_input(chat_id, user_id, 'admin_add', "➕ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់បន្ថែមជា Admin៖")
                 return
             if btn == BTN_ADMIN_REMOVE:
-                _prompt_admin_input(chat_id, user_id, 'admin_remove',
-                    "➖ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ដក៖")
+                _prompt_admin_input(chat_id, user_id, 'admin_remove', "➖ សូមផ្ញើ <b>Telegram User ID</b> ដែលចង់ដក៖")
                 return
             if btn == BTN_MAINT_ON:
                 MAINTENANCE_MODE = True
@@ -2769,16 +2540,13 @@ def handle_message(update):
                              reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
                 return
 
-        # Check if user is in a purchase session (for all users including admin)
         if user_id in user_sessions:
             session = user_sessions[user_id]
 
-            # Block any text while payment is pending — remind user to pay or cancel
             if session.get('state') == 'payment_pending':
                 _remind_pending_payment(chat_id, session)
                 return
 
-            # Quantity is selected via inline buttons only — any text shows account selection
             if session['state'] == 'waiting_for_quantity':
                 with _data_lock:
                     if user_id in user_sessions:
@@ -2787,7 +2555,6 @@ def handle_message(update):
                 send_account_selection_inline(chat_id)
                 return
 
-            # Handle confirm/cancel reply keyboard buttons
             elif session['state'] == 'waiting_for_confirmation':
                 if text.strip() == '✅ យល់ព្រម':
                     with _data_lock:
@@ -2804,16 +2571,17 @@ def handle_message(update):
                             save_sessions_async()
                             return
                         md5_hash = md5_or_err
-                        session['md5_hash'] = md5_hash
+                        session['md5_hash']   = md5_hash
                         session['qr_sent_at'] = time.time()
-                        dot_resp = send_sticker(chat_id, "CAACAgUAAxkBAAILvGnnaWwK-AXFeING4WOtIIKmoFYqAAIVAAMxIPsrpHGBfRB524Y7BA", reply_markup=_main_kb(user_id))
+                        dot_resp = send_sticker(chat_id, "CAACAgUAAxkBAAILvGnnaWwK-AXFeING4WOtIIKmoFYqAAIVAAMxIPsrpHGBfRB524Y7BA",
+                                                reply_markup=_main_kb(user_id))
                         if dot_resp and dot_resp.get('result'):
                             session['dot_message_id'] = dot_resp['result']['message_id']
                         photo_resp = send_photo_bytes(chat_id, img_bytes, reply_markup=CHECK_PAYMENT_KEYBOARD)
                         if photo_resp and photo_resp.get('result'):
                             msg_id = photo_resp['result']['message_id']
                             session['photo_message_id'] = msg_id
-                            session['qr_message_id'] = msg_id
+                            session['qr_message_id']    = msg_id
                         save_sessions_async()
                         save_pending_payment_async(user_id, chat_id, session)
                     except Exception as e:
@@ -2839,31 +2607,47 @@ def handle_message(update):
                     send_account_selection_inline(chat_id)
                     return
 
-        # Handle non-admin users
+            # Admin broadcast confirm/cancel flow
+            elif session.get('state') == 'broadcast_confirm' and is_admin(user_id):
+                stripped = text.strip()
+                if stripped == BTN_BROADCAST_CONFIRM:
+                    source_message_id  = session.get('broadcast_message_id')
+                    broadcast_chat_id  = session.get('broadcast_chat_id', chat_id)
+                    use_copy           = session.get('broadcast_use_copy', True)
+                    with _data_lock:
+                        if user_id in user_sessions:
+                            del user_sessions[user_id]
+                    save_sessions_async()
+                    send_message(chat_id, "📢 <b>ចាប់ផ្តើមផ្សាយ...</b>", parse_mode="HTML",
+                                 reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                    _run_background("broadcast", _run_broadcast, broadcast_chat_id, source_message_id, use_copy)
+                    return
+                if stripped == BTN_BROADCAST_CANCEL:
+                    with _data_lock:
+                        if user_id in user_sessions:
+                            del user_sessions[user_id]
+                    save_sessions_async()
+                    send_message(chat_id, "🚫 <b>បានបោះបង់ការផ្សាយ</b>", parse_mode="HTML",
+                                 reply_to_message_id=False, reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
+                    return
+
         if not is_admin(user_id):
             existing = user_sessions.get(user_id)
             if existing and existing.get('state') == 'payment_pending':
                 _remind_pending_payment(chat_id, existing)
                 return
-            logger.info(f"Non-admin user {user_id} sent unrecognized command, showing account selection")
             show_account_selection_local()
             return
-        
-        # Admin-only commands
-        if is_admin(user_id):
-            # All admin commands removed — use the ⚙️កំណត់ keyboard menu instead.
 
-            # Check if user is in a session
+        if is_admin(user_id):
             if user_id in user_sessions:
                 session = user_sessions[user_id]
-                
+
                 if session['state'] == 'waiting_for_accounts':
-                    # Parse email-only accounts (one per line)
-                    import re
                     email_pattern = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-                    accounts = []
+                    accounts      = []
                     seen_in_batch = set()
-                    lines = text.strip().split('\n')
+                    lines         = text.strip().split('\n')
                     for line in lines:
                         email = line.strip()
                         if email and email_pattern.match(email):
@@ -2873,94 +2657,67 @@ def handle_message(update):
                                 accounts.append({'email': email})
 
                     if not accounts:
-                        send_message(chat_id, "*មិនរកឃើញអ៊ីមែលត្រឹមត្រូវ! សូមបញ្ចូលតាមទម្រង់៖*\n\n```\nl1jebywyzos2@10mail.info\nabc123@gmail.com\n```", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=ADD_ACCOUNT_KEYBOARD)
+                        send_message(chat_id,
+                            "*មិនរកឃើញអ៊ីមែលត្រឹមត្រូវ! សូមបញ្ចូលតាមទម្រង់៖*\n\n"
+                            "```\nl1jebywyzos2@10mail.info\nabc123@gmail.com\n```",
+                            reply_to_message_id=message_id, parse_mode="Markdown",
+                            reply_markup=ADD_ACCOUNT_KEYBOARD)
                         return
 
-                    # Build set of all emails already in stock
+                    # Store accounts temporarily and ask for account type
                     with _data_lock:
-                        existing_emails = {
-                            a.get('email', '').lower()
-                            for accs in accounts_data.get('account_types', {}).values()
-                            for a in accs
-                            if a.get('email')
+                        user_sessions[user_id] = {
+                            'state': 'waiting_for_account_type',
+                            'pending_accounts': accounts
                         }
+                    save_sessions_async()
+                    send_message(chat_id,
+                        f"*✅ បានទទួល {len(accounts)} Accounts*\n\nសូមបញ្ចូលប្រភេទ Account (ឧ. Facebook, TikTok):",
+                        reply_to_message_id=message_id, parse_mode="Markdown",
+                        reply_markup=ADD_ACCOUNT_KEYBOARD)
+                    return
 
-                    # Also check emails already sold in purchase history
-                    try:
-                        sold_rows = _neon_query(
-                            "SELECT accounts FROM bot_purchase_history WHERE accounts IS NOT NULL"
-                        ).get('rows', []) or []
-                        for sr in sold_rows:
-                            sold_accs = sr.get('accounts') or []
-                            if isinstance(sold_accs, str):
-                                try:
-                                    sold_accs = json.loads(sold_accs)
-                                except Exception:
-                                    sold_accs = []
-                            for sa in sold_accs:
-                                if isinstance(sa, dict) and sa.get('email'):
-                                    existing_emails.add(sa['email'].lower())
-                    except Exception as sold_err:
-                        logger.warning(f"Could not fetch sold emails at input step: {sold_err}")
-
-                    duplicate_emails = [a['email'] for a in accounts if a['email'].lower() in existing_emails]
-                    new_accounts = [a for a in accounts if a['email'].lower() not in existing_emails]
-
-                    if duplicate_emails:
-                        dup_list = '\n'.join(duplicate_emails)
-                        if not new_accounts:
+                if session['state'] == 'waiting_for_account_type':
+                    account_type = text.strip()
+                    if not account_type or account_type == BTN_BACK_SETTINGS:
+                        if account_type == BTN_BACK_SETTINGS:
                             with _data_lock:
-                                user_sessions.pop(user_id, None)
+                                if user_id in user_sessions:
+                                    del user_sessions[user_id]
                             save_sessions_async()
-                            send_message(chat_id,
-                                f"❌ *មិនអាចបញ្ចូលបាន!*\n\nEmail ទាំងអស់មានស្រាប់ក្នុងប្រព័ន្ធ ឬបានលក់រួចហើយ៖\n```\n{dup_list}\n```",
-                                reply_to_message_id=message_id, parse_mode="Markdown",
-                                reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                            return
-                        send_message(chat_id,
-                            f"⚠️ *Email ខាងក្រោមមានស្រាប់ ហើយត្រូវបានរំលង៖*\n```\n{dup_list}\n```",
-                            reply_to_message_id=message_id, parse_mode="Markdown")
+                            send_admin_settings_menu(chat_id)
+                        else:
+                            send_message(chat_id, "សូមបញ្ចូលប្រភេទ Account ជាអក្សរ",
+                                         reply_to_message_id=message_id)
+                        return
+                    pending = session.get('pending_accounts', [])
+                    existing_price = accounts_data.get('prices', {}).get(account_type, 0)
+                    with _data_lock:
+                        user_sessions[user_id] = {
+                            'state': 'waiting_for_price',
+                            'pending_accounts': pending,
+                            'account_type': account_type
+                        }
+                    save_sessions_async()
+                    price_hint = f"\n\n(តម្លៃបច្ចុប្បន្ន: ${existing_price})" if existing_price else ""
+                    send_message(chat_id,
+                        f"*ប្រភេទ: {account_type}*\n\nសូមបញ្ចូលតម្លៃ (USD) ក្នុងមួយ Account:{price_hint}",
+                        reply_to_message_id=message_id, parse_mode="Markdown",
+                        reply_markup=ADD_ACCOUNT_KEYBOARD)
+                    return
 
-                    accounts = new_accounts
-                    with _data_lock:
-                        session['accounts'] = accounts
-                        session['state'] = 'waiting_for_account_type'
-                    save_sessions_async()
-                    count = len(accounts)
-                    send_message(chat_id, f"*បានបញ្ចូល Account ចំនួន {count}\n\nសូមបញ្ចូលប្រភេទ Account៖*", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=_build_account_type_keyboard())
-                    return
-                
-                elif session['state'] == 'waiting_for_account_type':
-                    account_type_input = text.strip()
-                    with _data_lock:
-                        existing_price = accounts_data.get('prices', {}).get(account_type_input)
-                        session['account_type'] = account_type_input
-                        session['state'] = 'waiting_for_price'
-                    save_sessions_async()
-                    if existing_price is not None:
-                        send_message(chat_id,
-                            f"*ប្រភេទ Account `{account_type_input}` មានស្រាប់ ដែលមានតម្លៃ {existing_price}$\n\nតម្លៃត្រូវតែដូចគ្នា ({existing_price}$) ដើម្បីបន្ថែម Account បាន៖*",
-                            reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=ADD_ACCOUNT_KEYBOARD)
-                    else:
-                        send_message(chat_id, f"*សូមដាក់តម្លៃក្នុងប្រភេទ Account {account_type_input}*", reply_to_message_id=message_id, parse_mode="Markdown", reply_markup=ADD_ACCOUNT_KEYBOARD)
-                    return
-                
-                elif session['state'] == 'waiting_for_price':
+                if session['state'] == 'waiting_for_price':
                     try:
-                        price = float(text.strip().replace('$', ''))
+                        price        = float(text.strip())
                         account_type = session['account_type']
-                        accounts = session['accounts']
-                        count = len(accounts)
+                        accounts     = session.get('pending_accounts', [])
 
-                        # Validate price matches existing price for this account type
+                        # Deduplicate against existing stock
                         with _data_lock:
-                            existing_price = accounts_data.get('prices', {}).get(account_type)
-                            # Check emails in stock AND already sold (purchase history)
-                            all_existing_emails = {
+                            existing_emails = {
                                 a.get('email', '').lower()
                                 for accs in accounts_data.get('account_types', {}).values()
-                                for a in accs
-                                if a.get('email')
+                                for a in accs if a.get('email')
                             }
                         try:
                             sold_rows = _neon_query(
@@ -2975,29 +2732,12 @@ def handle_message(update):
                                         sold_accs = []
                                 for sa in sold_accs:
                                     if isinstance(sa, dict) and sa.get('email'):
-                                        all_existing_emails.add(sa['email'].lower())
+                                        existing_emails.add(sa['email'].lower())
                         except Exception as sold_err:
-                            logger.warning(f"Could not fetch sold emails for dup check: {sold_err}")
+                            logger.warning(f"Could not fetch sold emails: {sold_err}")
 
-                        if existing_price is not None and round(existing_price, 4) != round(price, 4):
-                            send_message(chat_id,
-                                f"❌ *មិនអាចបញ្ចូលបាន!*\n\nប្រភេទ `{account_type}` មានតម្លៃ *{existing_price}$* ស្រាប់។\nតម្លៃដែលអ្នកបញ្ចូល *{price}$* មិនដូចគ្នា។\n\nសូមបញ្ចូលឡើងវិញដោយប្រើតម្លៃ *{existing_price}$*",
-                                reply_to_message_id=message_id, parse_mode="Markdown")
-                            return
-
-                        # Filter out duplicates within the new batch itself
-                        seen_in_batch = set()
-                        deduped_accounts = []
-                        for a in accounts:
-                            key = a.get('email', '').lower()
-                            if key not in seen_in_batch:
-                                seen_in_batch.add(key)
-                                deduped_accounts.append(a)
-                        accounts = deduped_accounts
-
-                        # Filter out emails already existing across all account types
-                        duplicate_emails = [a['email'] for a in accounts if a.get('email', '').lower() in all_existing_emails]
-                        new_accounts = [a for a in accounts if a.get('email', '').lower() not in all_existing_emails]
+                        duplicate_emails = [a['email'] for a in accounts if a['email'].lower() in existing_emails]
+                        new_accounts     = [a for a in accounts if a['email'].lower() not in existing_emails]
 
                         if duplicate_emails:
                             dup_list = '\n'.join(duplicate_emails)
@@ -3012,9 +2752,8 @@ def handle_message(update):
                                     reply_to_message_id=message_id, parse_mode="Markdown")
 
                         accounts = new_accounts
-                        count = len(accounts)
+                        count    = len(accounts)
 
-                        # Save to storage
                         with _data_lock:
                             accounts_data['accounts'].extend(accounts)
                             if account_type in accounts_data['account_types']:
@@ -3027,215 +2766,144 @@ def handle_message(update):
                         save_data()
                         save_sessions_async()
 
-                        # Send confirmation then return to settings
-                        send_message(chat_id, f"*✅ បានបញ្ចូល Account ដោយជោគជ័យ*\n\n```\n🔹 ចំនួន: {count}\n\n🔹 ប្រភេទ: {account_type}\n\n🔹 តម្លៃ: {price}$\n```", reply_to_message_id=message_id, parse_mode="Markdown")
+                        send_message(chat_id,
+                            f"*✅ បានបញ្ចូល Account ដោយជោគជ័យ*\n\n"
+                            f"```\n🔹 ចំនួន: {count}\n\n🔹 ប្រភេទ: {account_type}\n\n🔹 តម្លៃ: {price}$\n```",
+                            reply_to_message_id=message_id, parse_mode="Markdown")
                         send_admin_settings_menu(chat_id)
-
                         logger.info(f"Admin {user_id} added {count} accounts of type {account_type} with price ${price}")
 
                     except ValueError:
-                        send_message(chat_id, "តម្លៃមិនត្រឹមត្រូវ។ សូមបញ្ចូលតម្លៃជាលេខ (ឧទាហរណ៍: 5.99)", reply_to_message_id=message_id)
+                        send_message(chat_id, "តម្លៃមិនត្រឹមត្រូវ។ សូមបញ្ចូលតម្លៃជាលេខ (ឧទាហរណ៍: 5.99)",
+                                     reply_to_message_id=message_id)
                     return
-            
-            # If admin sent a message but it's not a recognized command or part of workflow
-            # Clear any existing session and show account selection interface
+
             if user_id in user_sessions:
                 with _data_lock:
                     del user_sessions[user_id]
                 logger.info(f"Cleared session for admin {user_id} due to unrecognized command")
-            
-            # Show account selection interface for any unrecognized admin input
             logger.info(f"Admin {user_id} sent unrecognized command, showing account selection interface")
             show_account_selection_local()
-        
-        # If not admin, ignore
-        
+
     except Exception as e:
         logger.error(f"Error handling message: {e}")
 
-CHECK_PAYMENT_KEYBOARD = {
-    'inline_keyboard': [
-        [
-            {'text': '🚫 បោះបង់', 'callback_data': 'cancel_purchase'},
-            {'text': '✅ ពិនិត្យការបង់ប្រាក់', 'callback_data': 'check_payment'}
-        ]
-    ]
-}
+# ── Pyrogram update converters ────────────────────────────────────────────────
+def _chat_type_str(chat_type) -> str:
+    return str(chat_type).split('.')[-1].lower()
 
-def deliver_accounts(chat_id, user_id, session, payment_data=None, user_name=''):
-    """Deliver purchased accounts to user after confirmed payment."""
-    account_type = session['account_type']
-    quantity = session['quantity']
+def _pyro_user_dict(user_obj) -> dict:
+    if not user_obj:
+        return {}
+    return {
+        'id':         user_obj.id,
+        'first_name': user_obj.first_name or '',
+        'last_name':  user_obj.last_name or '',
+        'username':   user_obj.username or '',
+        'is_bot':     getattr(user_obj, 'is_bot', False) or False,
+    }
 
-    # Delete KHQR photo and payment message
-    photo_message_id = session.get('photo_message_id')
-    if photo_message_id:
-        delete_message_async(chat_id, photo_message_id)
-    qr_message_id = session.get('qr_message_id')
-    if qr_message_id:
-        delete_message_async(chat_id, qr_message_id)
+def _pyro_msg_to_update(message) -> dict:
+    msg = {
+        'message_id': message.id,
+        'from':       _pyro_user_dict(message.from_user),
+        'chat':       {'id': message.chat.id, 'type': _chat_type_str(message.chat.type)},
+        'date':       int(message.date.timestamp()) if message.date else 0,
+    }
+    if message.text:
+        msg['text'] = message.text
+    if message.caption:
+        msg['caption'] = message.caption
+    return {'update_id': 0, 'message': msg}
 
-    with _data_lock:
-        if account_type not in accounts_data['account_types']:
-            available_count = None
-            delivered_accounts = None
-        else:
-            available_accounts = accounts_data['account_types'][account_type]
-            available_count = len(available_accounts)
-            if available_count < quantity:
-                delivered_accounts = None
-            else:
-                delivered_accounts = available_accounts[:quantity]
-                accounts_data['account_types'][account_type] = available_accounts[quantity:]
-                if user_id in user_sessions:
-                    del user_sessions[user_id]
+def _pyro_channel_to_update(message) -> dict:
+    msg = {
+        'message_id': message.id,
+        'chat':       {'id': message.chat.id, 'type': 'channel'},
+        'date':       int(message.date.timestamp()) if message.date else 0,
+    }
+    if message.text:
+        msg['text'] = message.text
+    if message.caption:
+        msg['caption'] = message.caption
+    return {'update_id': 0, 'channel_post': msg}
 
-    if delivered_accounts is None:
-        if available_count is None:
-            send_message(chat_id, f"❌ *មានបញ្ហា!*\n\nគ្មាន Account ប្រភេទ {account_type} ក្នុងស្តុក។",
-                         parse_mode="Markdown")
-        else:
-            send_message(chat_id,
-                         f"❌ *មានបញ្ហា!*\n\nសុំទោស! មានត្រឹមតែ {available_count} Accounts នៅក្នុងស្តុក។",
-                         parse_mode="Markdown")
-        return
+def _pyro_callback_to_update(callback) -> dict:
+    msg = {}
+    if callback.message:
+        msg = {
+            'message_id': callback.message.id,
+            'chat':       {'id': callback.message.chat.id},
+        }
+    return {
+        'update_id': 0,
+        'callback_query': {
+            'id':      callback.id,
+            'from':    _pyro_user_dict(callback.from_user),
+            'message': msg,
+            'data':    callback.data or '',
+        }
+    }
 
-    save_data()
-    save_purchase_history_async(user_id, account_type, quantity, session.get('total_price', 0), delivered_accounts)
+# ── Pyrogram event handlers ───────────────────────────────────────────────────
+@app.on_message(filters.channel)
+async def _on_channel_post(client, message):
+    update = _pyro_channel_to_update(message)
+    worker_pool.submit(handle_message, update)
 
-    accounts_message = f'<tg-emoji emoji-id="5436040291507247633">🎉</tg-emoji> <b>ការទិញបានបញ្ជាក់ដោយជោគជ័យ</b>\n\n'
-    accounts_message += '<b>គូប៉ុងរបស់អ្នក៖ <tg-emoji emoji-id="5470177992950946662">👇</tg-emoji></b>\n\n'
-    for account in delivered_accounts:
-        if 'email' in account:
-            accounts_message += f"{account['email']}\n"
-        else:
-            accounts_message += f"{account.get('phone', '')} | {account.get('password', '')}\n"
-    accounts_message += f"\n<i>សូមអរគុណសម្រាប់ការទិញ <tg-emoji emoji-id=\"5897474556834091884\">🙏</tg-emoji></i>"
+@app.on_callback_query()
+async def _on_callback_query(client, callback_query):
+    update = _pyro_callback_to_update(callback_query)
+    worker_pool.submit(handle_message, update)
 
-    send_message(chat_id, accounts_message, parse_mode="HTML", message_effect_id="5046509860389126442", reply_markup=_main_kb(user_id))
+@app.on_message(~filters.channel)
+async def _on_message(client, message):
+    update = _pyro_msg_to_update(message)
+    worker_pool.submit(handle_message, update)
 
-    # Show account selection menu right after delivery
-    send_account_selection_inline(chat_id)
-
-    # Notify admin/channel about successful payment
-    try:
-        import datetime
-        cambodia_tz = datetime.timezone(datetime.timedelta(hours=7))
-        now_str = datetime.datetime.now(cambodia_tz).strftime("%d/%m/%Y %H:%M")
-        pd = payment_data or {}
-        from_account = pd.get('fromAccountId') or pd.get('hash') or 'N/A'
-        memo = pd.get('memo') or 'គ្មាន'
-        ref = pd.get('externalRef') or pd.get('transactionId') or pd.get('md5') or 'N/A'
-        amount = session.get('total_price', 0)
-        buyer_label = f"{user_name} ({user_id})" if user_name else str(user_id)
-        admin_msg = (
-            "🎉 ទទួលបានការបង់ប្រាក់ជោគជ័យ\n"
-            "━━━━━━━━━━━━━━━━━━━\n"
-            f"🆔 ឈ្មោះអ្នកទិញ(ID): {buyer_label}\n"
-            f"💵 ទឹកប្រាក់: {amount} USD\n"
-            f"👤 ពីធនាគារ: {from_account}\n"
-            f"📝 ចំណាំ: {memo}\n"
-            f"🧾 លេខយោង: {ref}\n"
-            f"⏰ ម៉ោង: {now_str}"
-        )
-        send_purchase_notification(admin_msg)
-    except Exception as e:
-        logger.error(f"Failed to send admin payment notification: {e}")
-
-    save_sessions_async()
-
-    logger.info(f"Payment confirmed and {quantity} accounts delivered to user {user_id}")
-
+# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    """Main bot loop."""
+    global _event_loop
+
+    # Single-process lock (prevent duplicate instances)
     lock_file = open('/tmp/telegram_bot_simple.lock', 'w')
     try:
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        logger.error("Another bot process is already running in this project. Exiting duplicate process.")
+        logger.error("Another bot process is already running. Exiting duplicate process.")
         return
 
-    logger.info("Starting Telegram Bot...")
+    logger.info("Starting Telegram Bot (Pyrogram MTProto)...")
     logger.info(f"Bot token configured: {BOT_TOKEN[:10]}...")
+    logger.info(f"API_ID configured: {API_ID}")
 
-    # Re-arm any scheduled message deletions from the DB so a cold restart
-    # doesn't leak un-deleted messages.
+    # Re-arm scheduled deletions from DB
     resume_scheduled_deletions()
 
-    # Delete any active webhook so polling mode works without 409 conflicts
-    try:
-        http.post(f"{API_URL}/deleteWebhook", timeout=10)
-        logger.info("Webhook deleted — polling mode active")
-    except Exception as e:
-        logger.warning(f"Could not delete webhook: {e}")
-
-    # Test bot connection
-    try:
-        test_url = f"{API_URL}/getMe"
-        response = http.get(test_url, timeout=10)
-        response.raise_for_status()
-        bot_info = response.json()
-        
-        if bot_info.get('ok'):
-            bot_data = bot_info.get('result', {})
-            logger.info(f"Bot connected successfully: @{bot_data.get('username', 'Unknown')}")
-        else:
-            logger.error("Failed to connect to bot")
-            return
-            
-    except requests.RequestException as e:
-        logger.error(f"Failed to test bot connection: {e}")
-        return
-    
-    # Start Neon keep-alive daemon thread
+    # Start Neon keep-alive daemon
     _ka_thread = threading.Thread(target=_neon_keepalive, daemon=True, name="neon-keepalive")
     _ka_thread.start()
     logger.info("Neon keep-alive thread started (ping every 4 minutes)")
 
-    # Main polling loop
-    offset = None
-    consecutive_409 = 0
-    logger.info("Bot is now polling for updates...")
-    
-    while True:
-        try:
-            updates = get_updates(offset)
-            
-            if not updates or not updates.get('ok'):
-                time.sleep(1)
-                continue
-            
-            consecutive_409 = 0  # reset on success
-            for update in updates.get('result', []):
-                offset = update['update_id'] + 1
-                worker_pool.submit(handle_message, update)
-                
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code == 409:
-                consecutive_409 += 1
-                if consecutive_409 % 10 == 1:
-                    logger.warning(f"409 Conflict (#{consecutive_409}) — webhook active on another server. Re-deleting webhook...")
-                    try:
-                        http.post(f"{API_URL}/deleteWebhook", timeout=10)
-                        logger.info("Webhook re-deleted, resuming polling")
-                    except Exception as we:
-                        logger.warning(f"Could not re-delete webhook: {we}")
-                time.sleep(3)
-            else:
-                logger.error(f"HTTP error in main loop: {e}")
-                time.sleep(5)
-        except KeyboardInterrupt:
-            logger.info("Bot stopped by user")
-            break
-        except Exception as e:
-            logger.error(f"Error in main loop: {e}")
-            time.sleep(5)
+    async def _run():
+        global _event_loop
+        _event_loop = asyncio.get_running_loop()
+        logger.info("Connecting to Telegram via MTProto (Pyrogram)...")
+        await app.start()
+        me = await app.get_me()
+        logger.info(f"Bot connected via MTProto: @{me.username} ({me.first_name})")
+        logger.info("Bot is now receiving updates via Pyrogram MTProto...")
+        from pyrogram import idle
+        await idle()
+        await app.stop()
 
-if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(_run())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user interrupt")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

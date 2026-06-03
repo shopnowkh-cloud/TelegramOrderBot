@@ -1,0 +1,1 @@
+- [Pyrogram MTProto migration](pyrogram-migration.md) — transport layer replaced with Pyrogram; business logic untouched via dict-converter pattern.
