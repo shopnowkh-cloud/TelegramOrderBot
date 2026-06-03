@@ -8,6 +8,7 @@
 replit.md
 pyproject.toml
 uv.lock
+render.yaml
 __pycache__
 *.pyc
 *.pyo

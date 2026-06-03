@@ -455,7 +455,7 @@ def _init_db():
         r = _neon_query("SELECT COUNT(*) as cnt FROM bot_sessions")
         if int(r['rows'][0]['cnt']) == 0:
             _neon_query("INSERT INTO bot_sessions (data) VALUES ($1)", [json.dumps({})])
-        logger.info("Replit PostgreSQL DB initialized")
+        logger.info("Neon DB initialized successfully")
     except Exception as e:
         logger.error(f"DB init failed: {e}")
 
