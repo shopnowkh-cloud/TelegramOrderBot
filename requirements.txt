@@ -6,12 +6,7 @@ requests==2.34.2
 bakong-khqr[image]==0.5.8
 qrcode[pil]==8.2
 Pillow==12.2.0
-bakong-khqr
-pillow
-pyrogram
-qrcode
-requests
-bakong-khqr
-pillow
-qrcode
-requests
+edge-tts
+imageio-ffmpeg
+edge-tts
+imageio-ffmpeg
