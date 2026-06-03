@@ -3042,7 +3042,7 @@ def _clone_handle_update(base_url, update):
         if data.startswith('ttv_gender:'):
             gender = data.split(':', 1)[1]
             _clone_bot_prefs.setdefault(user_id, {})['gender'] = gender
-            label = "👩 ស្រី" if gender == 'female' else "👨 ប្រុស"
+            label = "សំឡេងស្រី" if gender == 'female' else "សំឡេងប្រុស"
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
                        text=f"✅ ប្តូរទៅ <b>{label}</b>", parse_mode="HTML")
         elif data.startswith('ttv_speed:'):
@@ -3143,7 +3143,7 @@ def _clone_handle_update(base_url, update):
             cur_idx    = _TTV_SPEED_KEYS.index(speed) if speed in _TTV_SPEED_KEYS else 1
             next_speed = _TTV_SPEED_KEYS[(cur_idx + 1) % len(_TTV_SPEED_KEYS)]
             kb_row = [
-                {'text': '👨 ប្រុស' if gender == 'female' else '👩 ស្រី',
+                {'text': 'សំឡេងប្រុស' if gender == 'female' else 'សំឡេងស្រី',
                  'callback_data': f"ttv_gender:{'male' if gender == 'female' else 'female'}"},
                 {'text': f"⚡ {next_speed}", 'callback_data': f"ttv_speed:{next_speed}"},
             ]
