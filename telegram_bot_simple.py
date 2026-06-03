@@ -2913,14 +2913,22 @@ def main():
     async def _run():
         global _event_loop
         _event_loop = asyncio.get_running_loop()
-        logger.info("Connecting to Telegram via MTProto (Pyrogram)...")
-        await app.start()
-        me = await app.get_me()
-        logger.info(f"Bot connected via MTProto: @{me.username} ({me.first_name})")
-        logger.info("Bot is now receiving updates via Pyrogram MTProto...")
+        from pyrogram.errors import FloodWait
         from pyrogram import idle
-        await idle()
-        await app.stop()
+        while True:
+            try:
+                logger.info("Connecting to Telegram via MTProto (Pyrogram)...")
+                await app.start()
+                me = await app.get_me()
+                logger.info(f"Bot connected via MTProto: @{me.username} ({me.first_name})")
+                logger.info("Bot is now receiving updates via Pyrogram MTProto...")
+                await idle()
+                await app.stop()
+                break
+            except FloodWait as e:
+                logger.warning(f"Flood wait: Telegram requires waiting {e.value} seconds. Sleeping...")
+                await asyncio.sleep(e.value + 5)
+                logger.info("Flood wait over, retrying connection...")
 
     try:
         asyncio.run(_run())
