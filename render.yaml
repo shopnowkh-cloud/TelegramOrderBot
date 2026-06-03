@@ -1,0 +1,17 @@
+services:
+  - type: worker
+    name: coupon-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: NEON_DATABASE_URL
+        sync: false
+      - key: BAKONG_TOKEN
+        sync: false

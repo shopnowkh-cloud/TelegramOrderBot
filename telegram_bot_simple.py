@@ -2861,6 +2861,28 @@ async def _on_message(client, message):
     update = _pyro_msg_to_update(message)
     worker_pool.submit(handle_message, update)
 
+# ── Health-check HTTP server (for Render / monitoring) ────────────────────────
+def _start_health_server():
+    import http.server
+    port = int(os.environ.get("PORT", 10000))
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+    try:
+        with http.server.HTTPServer(("0.0.0.0", port), _Handler) as srv:
+            logger.info(f"Health-check server listening on port {port}")
+            srv.serve_forever()
+    except Exception as e:
+        logger.warning(f"Health-check server error: {e}")
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     global _event_loop
@@ -2876,6 +2898,9 @@ def main():
     logger.info("Starting Telegram Bot (Pyrogram MTProto)...")
     logger.info(f"Bot token configured: {BOT_TOKEN[:10]}...")
     logger.info(f"API_ID configured: {API_ID}")
+
+    # Health-check HTTP server (Render / uptime monitors)
+    threading.Thread(target=_start_health_server, daemon=True, name="health-server").start()
 
     # Re-arm scheduled deletions from DB
     resume_scheduled_deletions()
