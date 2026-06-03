@@ -3050,20 +3050,28 @@ def _clone_handle_update(base_url, update):
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
                        text=f'<tg-emoji emoji-id="6217467173917429904">✅</tg-emoji> <b>បានប្តូរទៅ {label}</b>',
                        parse_mode="HTML")
-        elif data.startswith('ttv_speed:'):
-            speed = data.split(':', 1)[1]
-            _clone_bot_prefs.setdefault(user_id, {})['speed'] = speed
+        elif data == 'ttv_speed_menu':
+            cur_speed = _clone_bot_prefs.get(user_id, {}).get('speed', 'x1')
             speed_kb = {'inline_keyboard': [[
                 {
-                    'text': f"✅ {s}" if s == speed else s,
+                    'text': f"✅ {s}" if s == cur_speed else s,
                     'callback_data': f"ttv_speed:{s}",
-                    **(({'style': 'success'}) if s == speed else {}),
+                    **(({'style': 'success'}) if s == cur_speed else {}),
                 }
                 for s in _TTV_SPEED_KEYS
             ]]}
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
-                       text="ជ្រើសរើសល្បឿនសំឡេង:",
+                       text='<b>ជ្រើសរើសល្បឿនសំឡេង:</b>',
+                       parse_mode='HTML',
                        reply_markup=speed_kb)
+        elif data.startswith('ttv_speed:'):
+            speed = data.split(':', 1)[1]
+            _clone_bot_prefs.setdefault(user_id, {})['speed'] = speed
+            if msg_id:
+                _clone_api(base_url, 'deleteMessage', chat_id=chat_id, message_id=msg_id)
+            _clone_api(base_url, 'sendMessage', chat_id=chat_id,
+                       text=f'<tg-emoji emoji-id="6217467173917429904">✅</tg-emoji> <b>បានផ្លាស់ប្តូរល្បឿនទៅ {speed}</b>',
+                       parse_mode='HTML')
         elif data.startswith('cln_lang_'):
             lang_code = data[9:]
             lang_name = TRANSLATE_LANGUAGES.get(lang_code, lang_code)
@@ -3143,7 +3151,7 @@ def _clone_handle_update(base_url, update):
                  'callback_data': f"ttv_gender:{'male' if gender == 'female' else 'female'}",
                  'style': 'success'},
                 {'text': 'ល្បឿន',
-                 'callback_data': f"ttv_speed:{next_speed}",
+                 'callback_data': 'ttv_speed_menu',
                  'style': 'primary',
                  'icon_custom_emoji_id': '5445284980978621387'},
             ]
