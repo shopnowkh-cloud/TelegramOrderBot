@@ -3447,6 +3447,7 @@ def _ca_cache_message(chat_id, msg):
     entry = {
         'user_id':    user_id,
         'first_name': user.get('first_name', ''),
+        'username':   user.get('username', ''),
         'text':       text[:200],
         'ts':         time.time(),
     }
@@ -3487,18 +3488,14 @@ def _ca_check_deleted(base_url):
             except Exception:
                 pass
             if resp is False:
-                # Message was deleted — notify the original sender
-                uid        = entry['user_id']
-                fname      = html.escape(entry['first_name'] or 'អ្នកប្រើ')
-                preview    = html.escape(entry['text'][:80]) if entry['text'] else '<i>(media)</i>'
-                notify_txt = (
-                    f"🗑 <b>Message ត្រូវបានលុប</b>\n\n"
-                    f"👤 អ្នកផ្ញើ: {fname}\n"
-                    f"💬 មាតិកា: {preview}\n"
-                    f"🕐 ពេលវេលា: {datetime.fromtimestamp(entry['ts']).strftime('%H:%M:%S')}"
-                )
-                _ca_api(base_url, 'sendMessage', chat_id=uid,
-                        text=notify_txt, parse_mode='HTML')
+                # Message was deleted — notify admin
+                fname    = entry.get('first_name') or 'Unknown'
+                uname    = entry.get('username', '')
+                preview  = entry['text'][:200] if entry['text'] else '(media/file)'
+                who_line = f"{fname} @{uname}" if uname else fname
+                notify_txt = f"{who_line} deleted a message:\n\n{preview}"
+                _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+                        text=notify_txt)
                 with _chatbot_cache_lock:
                     _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
             time.sleep(0.15)  # Respect rate limits
@@ -3515,17 +3512,13 @@ def _chatbot_handle_update(base_url, update):
             for mid in msg_ids:
                 entry = cached.get(mid)
                 if entry:
-                    uid    = entry['user_id']
-                    fname  = html.escape(entry['first_name'] or 'អ្នកប្រើ')
-                    preview = html.escape(entry['text'][:80]) if entry['text'] else '<i>(media)</i>'
-                    notify_txt = (
-                        f"🗑 <b>Message ត្រូវបានលុប</b>\n\n"
-                        f"👤 អ្នកផ្ញើ: {fname}\n"
-                        f"💬 មាតិកា: {preview}\n"
-                        f"🕐 ពេលវេលា: {datetime.fromtimestamp(entry['ts']).strftime('%H:%M:%S')}"
-                    )
-                    _ca_api(base_url, 'sendMessage', chat_id=uid,
-                            text=notify_txt, parse_mode='HTML')
+                    fname    = entry.get('first_name') or 'Unknown'
+                    uname    = entry.get('username', '')
+                    preview  = entry['text'][:200] if entry['text'] else '(media/file)'
+                    who_line = f"{fname} @{uname}" if uname else fname
+                    notify_txt = f"{who_line} deleted a message:\n\n{preview}"
+                    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+                            text=notify_txt)
                     with _chatbot_cache_lock:
                         _chatbot_msg_cache.get(chat_id, {}).pop(mid, None)
         return
