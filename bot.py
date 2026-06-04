@@ -89,9 +89,53 @@ _ca_notified_deletions: set = set()      # {(chat_id, msg_id)} — prevent doubl
 _ca_notified_lock = threading.Lock()
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
+_TG_EMOJI_RE = re.compile(r'<tg-emoji emoji-id="(\d+)">(.*?)</tg-emoji>', re.DOTALL)
+
+def _utf16_len(s):
+    return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
+
+def _expand_tg_emoji(text):
+    """Parse <tg-emoji emoji-id="ID">FALLBACK</tg-emoji> → (clean_text, entities)."""
+    entities, clean, offset, last = [], '', 0, 0
+    for m in _TG_EMOJI_RE.finditer(text):
+        prefix = text[last:m.start()]
+        clean += prefix
+        offset += _utf16_len(prefix)
+        fallback = m.group(2)
+        length = _utf16_len(fallback)
+        entities.append({'type': 'custom_emoji', 'offset': offset,
+                         'length': length, 'custom_emoji_id': m.group(1)})
+        clean += fallback
+        offset += length
+        last = m.end()
+    clean += text[last:]
+    return clean, entities
+
+def _process_inline_keyboard(markup):
+    """Expand <tg-emoji> tags in inline button text → text + text_entities (Bot API 9.4)."""
+    if not isinstance(markup, dict) or 'inline_keyboard' not in markup:
+        return markup
+    new_rows = []
+    for row in markup['inline_keyboard']:
+        new_row = []
+        for btn in row:
+            if isinstance(btn, dict) and '<tg-emoji' in (btn.get('text') or ''):
+                clean, ents = _expand_tg_emoji(btn['text'])
+                new_btn = dict(btn)
+                new_btn['text'] = clean
+                if ents:
+                    new_btn['text_entities'] = ents
+                new_row.append(new_btn)
+            else:
+                new_row.append(btn)
+        new_rows.append(new_row)
+    return {**markup, 'inline_keyboard': new_rows}
+
 def _tg_api(method, _files=None, **kwargs):
     """Call a Telegram Bot API method. Returns the 'result' field or None."""
     url = f"{BOT_API_URL}{method}"
+    if 'reply_markup' in kwargs and isinstance(kwargs['reply_markup'], dict):
+        kwargs['reply_markup'] = _process_inline_keyboard(kwargs['reply_markup'])
     try:
         if _files:
             data = {}
@@ -1274,7 +1318,7 @@ BTN_ADMINS          = '👑 គ្រប់គ្រង Admin'
 BTN_MAINTENANCE     = '🛠 Maintenance Mode'
 BTN_BROADCAST       = '📢 ផ្សាយព័ត៌មាន'
 BTN_BACK_HOME       = '🏠 ត្រឡប់ទៅម៉ឺនុយដើម'
-BTN_BACK_SETTINGS   = '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់ទៅកំណត់'
+BTN_BACK_SETTINGS   = '◀️ ត្រឡប់ទៅកំណត់'
 BTN_PAYMENT_EDIT    = '✏️ ប្តូរឈ្មោះ Payment'
 BTN_BAKONG_EDIT     = '✏️ ប្តូរ Bakong Token'
 BTN_CHANNEL_EDIT    = '✏️ ប្តូរ Channel ID'
@@ -3429,6 +3473,8 @@ def _stop_translate_bot():
 
 # ── Chat Automation Bot engine ────────────────────────────────────────────────
 def _ca_api(base_url, method, **kwargs):
+    if 'reply_markup' in kwargs and isinstance(kwargs['reply_markup'], dict):
+        kwargs['reply_markup'] = _process_inline_keyboard(kwargs['reply_markup'])
     try:
         resp = http.post(f"{base_url}{method}",
                          json={k: v for k, v in kwargs.items() if v is not None}, timeout=15)
