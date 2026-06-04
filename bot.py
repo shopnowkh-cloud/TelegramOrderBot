@@ -81,6 +81,7 @@ _admin_settings_msg: dict = {}   # {user_id: message_id} — settings panel to e
 CHATBOT_TOKEN  = ""
 CHATBOT_ACTIVE = False
 _chatbot_thread = None
+_chatbot_scan_thread = None
 _chatbot_msg_cache: dict = {}   # {chat_id: {msg_id: {user_id, first_name, text, ts}}}
 _chatbot_cache_lock = threading.Lock()
 _chatbot_scan_lock  = threading.Lock()   # prevents concurrent deletion scans
@@ -3567,11 +3568,25 @@ def _chatbot_handle_update(base_url, update):
         # Cache every message for deletion tracking
         _ca_cache_message(chat_id, msg)
 
+def _chatbot_scan_loop(base_url):
+    """Dedicated thread: scans for deleted messages every 10 s, independently of polling."""
+    logger.info("Chat Automation scan thread started")
+    while CHATBOT_ACTIVE:
+        try:
+            _ca_check_deleted(base_url)
+        except Exception as e:
+            logger.error(f"Chat Automation scan error: {e}")
+        # Sleep in small steps so the thread exits quickly when CHATBOT_ACTIVE → False
+        for _ in range(100):
+            if not CHATBOT_ACTIVE:
+                break
+            time.sleep(0.1)
+    logger.info("Chat Automation scan thread stopped")
+
 def _chatbot_polling_loop(token):
     global CHATBOT_ACTIVE
     base_url = f"https://api.telegram.org/bot{token}/"
     offset   = None
-    last_scan = 0
     logger.info(f"Chat Automation Bot [{token[:10]}...] started")
     try:
         http.post(f"{base_url}deleteWebhook",
@@ -3582,7 +3597,9 @@ def _chatbot_polling_loop(token):
         try:
             params = {
                 'timeout': 25,
-                'allowed_updates': ['message', 'edited_message', 'business_connection', 'business_message', 'edited_business_message', 'deleted_business_messages'],
+                'allowed_updates': ['message', 'edited_message', 'business_connection',
+                                    'business_message', 'edited_business_message',
+                                    'deleted_business_messages'],
             }
             if offset is not None:
                 params['offset'] = offset
@@ -3595,10 +3612,6 @@ def _chatbot_polling_loop(token):
             else:
                 logger.warning(f"Chat Automation getUpdates: {data.get('description')}")
                 time.sleep(3)
-            # Run deleted-message scan every 10 seconds for near-instant detection
-            if time.time() - last_scan >= 10:
-                background_pool.submit(_ca_check_deleted, base_url)
-                last_scan = time.time()
         except Exception as e:
             if CHATBOT_ACTIVE:
                 logger.error(f"Chat Automation polling error: {e}")
@@ -3606,20 +3619,27 @@ def _chatbot_polling_loop(token):
     logger.info("Chat Automation polling stopped")
 
 def _start_chatbot(token):
-    global _chatbot_thread, CHATBOT_ACTIVE
+    global _chatbot_thread, _chatbot_scan_thread, CHATBOT_ACTIVE
     _stop_chatbot()
     CHATBOT_ACTIVE = True
+    base_url = f"https://api.telegram.org/bot{token}/"
     _chatbot_thread = threading.Thread(
         target=_chatbot_polling_loop, args=(token,),
-        daemon=True, name="chatbot"
+        daemon=True, name="chatbot-poll"
+    )
+    _chatbot_scan_thread = threading.Thread(
+        target=_chatbot_scan_loop, args=(base_url,),
+        daemon=True, name="chatbot-scan"
     )
     _chatbot_thread.start()
-    logger.info("Chat Automation Bot thread started")
+    _chatbot_scan_thread.start()
+    logger.info("Chat Automation Bot threads started (poll + scan)")
 
 def _stop_chatbot():
-    global CHATBOT_ACTIVE, _chatbot_thread
+    global CHATBOT_ACTIVE, _chatbot_thread, _chatbot_scan_thread
     CHATBOT_ACTIVE = False
     _chatbot_thread = None
+    _chatbot_scan_thread = None
 
 # ── Multi-bot clone management ────────────────────────────────────────────────
 def _clone_bot_loop_v2(token, stop_event):
