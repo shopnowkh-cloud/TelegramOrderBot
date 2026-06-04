@@ -3541,6 +3541,48 @@ def _ca_cache_message(chat_id, msg):
     if not msg_id or not user_id:
         return
     emoji, preview = _ca_describe_msg(msg)
+
+    # Extract media info so deletion notifications can forward the actual content
+    media_type  = None
+    file_id     = None
+    media_extra = {}
+    if msg.get('photo'):
+        media_type = 'photo'
+        file_id    = msg['photo'][-1]['file_id']          # largest available size
+    elif msg.get('video'):
+        media_type = 'video'
+        file_id    = msg['video']['file_id']
+    elif msg.get('voice'):
+        media_type = 'voice'
+        file_id    = msg['voice']['file_id']
+    elif msg.get('audio'):
+        media_type = 'audio'
+        file_id    = msg['audio']['file_id']
+    elif msg.get('document'):
+        media_type = 'document'
+        file_id    = msg['document']['file_id']
+    elif msg.get('video_note'):
+        media_type = 'video_note'
+        file_id    = msg['video_note']['file_id']
+    elif msg.get('sticker'):
+        media_type = 'sticker'
+        file_id    = msg['sticker']['file_id']
+    elif msg.get('animation'):
+        media_type = 'animation'
+        file_id    = msg['animation']['file_id']
+    elif msg.get('location'):
+        media_type  = 'location'
+        loc         = msg['location']
+        media_extra = {'latitude': loc['latitude'], 'longitude': loc['longitude']}
+    elif msg.get('contact'):
+        media_type  = 'contact'
+        c           = msg['contact']
+        media_extra = {
+            'phone_number': c.get('phone_number', ''),
+            'first_name':   c.get('first_name', ''),
+            'last_name':    c.get('last_name', ''),
+        }
+
     entry = {
         'user_id':    user_id,
         'first_name': user.get('first_name', ''),
@@ -3548,6 +3590,10 @@ def _ca_cache_message(chat_id, msg):
         'emoji':      emoji,
         'text':       preview,
         'ts':         time.time(),
+        'media_type': media_type,
+        'file_id':    file_id,
+        'caption':    (msg.get('caption') or '').strip(),
+        'media_extra': media_extra,
     }
     with _chatbot_cache_lock:
         _chatbot_msg_cache.setdefault(chat_id, {})[msg_id] = entry
@@ -3570,13 +3616,73 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
             oldest = list(_ca_notified_deletions)[:500]
             for k in oldest:
                 _ca_notified_deletions.discard(k)
-    fname    = entry.get('first_name') or 'Unknown'
-    uname    = entry.get('username', '')
-    emoji    = entry.get('emoji', '📨')
-    preview  = entry.get('text', '') or '(unknown)'
-    who_line = f"{fname} @{uname}" if uname else fname
-    notify_txt = f"🗑 {who_line} លុបសារ:\n\n{emoji} {preview}"
-    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
+    fname       = entry.get('first_name') or 'Unknown'
+    uname       = entry.get('username', '')
+    emoji       = entry.get('emoji', '📨')
+    preview     = entry.get('text', '') or '(not cached)'
+    who_line    = f"{fname} @{uname}" if uname else fname
+    header      = f"🗑 {who_line} លុបសារ:"
+    media_type  = entry.get('media_type')
+    file_id     = entry.get('file_id')
+    caption_orig = entry.get('caption', '')
+    media_extra  = entry.get('media_extra', {})
+
+    # Caption appended to media (original caption if any)
+    cap_suffix = f"\n📝 {caption_orig}" if caption_orig else ''
+    media_caption = f"{header}{cap_suffix}"
+
+    # Media types that accept a caption field directly
+    _CAPTION_METHODS = {
+        'photo':     ('sendPhoto',     'photo'),
+        'video':     ('sendVideo',     'video'),
+        'voice':     ('sendVoice',     'voice'),
+        'audio':     ('sendAudio',     'audio'),
+        'document':  ('sendDocument',  'document'),
+        'animation': ('sendAnimation', 'animation'),
+    }
+
+    sent = False
+    if file_id and media_type in _CAPTION_METHODS:
+        method, param = _CAPTION_METHODS[media_type]
+        r = _ca_api(base_url, method,
+                    chat_id=ADMIN_ID,
+                    **{param: file_id},
+                    caption=media_caption)
+        sent = r is not None
+
+    elif file_id and media_type == 'sticker':
+        # Stickers don't support captions — send header text first, then sticker
+        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
+        _ca_api(base_url, 'sendSticker', chat_id=ADMIN_ID, sticker=file_id)
+        sent = True
+
+    elif file_id and media_type == 'video_note':
+        # Video notes don't support captions either
+        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
+        _ca_api(base_url, 'sendVideoNote', chat_id=ADMIN_ID, video_note=file_id)
+        sent = True
+
+    elif media_type == 'location' and media_extra:
+        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+                text=f"{header}\n\n{emoji} {preview}")
+        _ca_api(base_url, 'sendLocation', chat_id=ADMIN_ID,
+                latitude=media_extra['latitude'], longitude=media_extra['longitude'])
+        sent = True
+
+    elif media_type == 'contact' and media_extra:
+        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+                text=f"{header}\n\n{emoji} {preview}")
+        _ca_api(base_url, 'sendContact', chat_id=ADMIN_ID,
+                phone_number=media_extra['phone_number'],
+                first_name=media_extra['first_name'],
+                last_name=media_extra.get('last_name') or '')
+        sent = True
+
+    if not sent:
+        # Fallback: plain text for text messages and any unknown types
+        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+                text=f"{header}\n\n{emoji} {preview}")
+
     with _chatbot_cache_lock:
         _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
 
