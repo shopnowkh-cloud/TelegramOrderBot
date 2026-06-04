@@ -3157,7 +3157,7 @@ def _clone_handle_update(base_url, update):
             ]
             kb = {'inline_keyboard': [kb_row]}
             _clone_send_voice(base_url, chat_id, ogg_bytes,
-                              reply_to=msg.get('message_id'), reply_markup=kb)
+                              reply_markup=kb)
         else:
             _clone_api(base_url, 'sendMessage', chat_id=chat_id,
                        text="⚠️ មានបញ្ហាក្នុងការបង្កើតសំឡេង។ សូមព្យាយាមម្តងទៀត។")
