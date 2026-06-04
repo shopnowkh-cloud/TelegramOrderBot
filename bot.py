@@ -3543,8 +3543,6 @@ def _show_clone_bot_menu(chat_id, user_id=None):
         f"{bot_info_line}"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
-        f"<i>Bot នឹង​ប្ត្ឧរ​អក្សរ​ជា​សំប័ក​ត្រកម្លស្វ័យប្រវត្តិ</i>\n"
-        f"<i>🌐 គាមត្រ: ខ្មែរ · English · 中文 · ภាษาไทย · ...</i>"
     )
     _settings_edit(chat_id, uid, msg, _build_settings_tts_ikb())
 
@@ -3580,8 +3578,6 @@ def _show_translate_bot_menu(chat_id, user_id=None):
         f"{bot_info_line}"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n\n"
-        f"<i>Bot នឹង​បកប្រែ​អក្សរ​ជាភាសា​ដែល​ជ្រើស​ត្រកម្លស្វ័យប្រវត្តិ</i>\n"
-        f"<i>🌍 គាមត្រ: ខ្មែរ · English · 中文 · ภาษาไทย · ...</i>"
     )
     _settings_edit(chat_id, uid, msg, _build_settings_tr_ikb())
 
