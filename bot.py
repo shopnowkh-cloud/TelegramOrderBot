@@ -3508,7 +3508,7 @@ def _ca_api(base_url, method, **kwargs):
         result = resp.json()
         if result.get('ok'):
             return result.get('result')
-        logger.debug(f"CA API {method}: {result.get('description')}")
+        logger.warning(f"CA API {method} failed: {result.get('description')}")
     except Exception as e:
         logger.error(f"CA API {method} error: {e}")
     return None
@@ -3646,7 +3646,12 @@ def _ca_cache_message(chat_id, msg, scan_url=None):
         }
 
 def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
-    """Send a deletion notification to admin — deduplicated so only one fires per message."""
+    """Send a deletion notification to admin — deduplicated so only one fires per message.
+    NOTE: Always uses BOT_API_URL (main bot) to reach the admin, because the admin already
+    has a conversation with the main bot.  The chatbot token cannot message the admin unless
+    the admin has explicitly started it, which would be silently blocked by Telegram."""
+    # Always use the main bot URL to send to admin — guaranteed to work
+    notify_url = BOT_API_URL
     key = (chat_id, msg_id)
     with _ca_notified_lock:
         if key in _ca_notified_deletions:
@@ -3689,7 +3694,7 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
     sent = False
     if file_id and media_type in _CAPTION_METHODS:
         method, param = _CAPTION_METHODS[media_type]
-        r = _ca_api(base_url, method,
+        r = _ca_api(notify_url, method,
                     chat_id=ADMIN_ID,
                     **{param: file_id},
                     caption=media_caption)
@@ -3697,27 +3702,27 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
 
     elif file_id and media_type == 'sticker':
         # Stickers don't support captions — send header text first, then sticker
-        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
-        _ca_api(base_url, 'sendSticker', chat_id=ADMIN_ID, sticker=file_id)
+        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
+        _ca_api(notify_url, 'sendSticker', chat_id=ADMIN_ID, sticker=file_id)
         sent = True
 
     elif file_id and media_type == 'video_note':
         # Video notes don't support captions either
-        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
-        _ca_api(base_url, 'sendVideoNote', chat_id=ADMIN_ID, video_note=file_id)
+        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
+        _ca_api(notify_url, 'sendVideoNote', chat_id=ADMIN_ID, video_note=file_id)
         sent = True
 
     elif media_type == 'location' and media_extra:
-        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID,
                 text=f"{header}\n\n{emoji} {preview}")
-        _ca_api(base_url, 'sendLocation', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendLocation', chat_id=ADMIN_ID,
                 latitude=media_extra['latitude'], longitude=media_extra['longitude'])
         sent = True
 
     elif media_type == 'contact' and media_extra:
-        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID,
                 text=f"{header}\n\n{emoji} {preview}")
-        _ca_api(base_url, 'sendContact', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendContact', chat_id=ADMIN_ID,
                 phone_number=media_extra['phone_number'],
                 first_name=media_extra['first_name'],
                 last_name=media_extra.get('last_name') or '')
@@ -3725,7 +3730,7 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
 
     if not sent:
         # Fallback: plain text for text messages and any unknown types
-        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID,
                 text=f"{header}\n\n{emoji} {preview}")
 
     with _chatbot_cache_lock:
@@ -3798,7 +3803,8 @@ def _chatbot_handle_update(base_url, update):
                 f"👤 {who}\n\n"
                 f"To enable it again, add the bot to Chat Bots."
             )
-        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=txt)
+        # Use main bot URL so admin always receives this regardless of chatbot interaction
+        _ca_api(BOT_API_URL, 'sendMessage', chat_id=ADMIN_ID, text=txt)
         return
 
     # Handle Telegram Business deleted messages directly
@@ -3883,11 +3889,12 @@ def _chatbot_handle_update(base_url, update):
                 existing_notify_id = _ca_edit_notify_msgs.get(key)
             edited = False
             if existing_notify_id:
-                r = _ca_api(base_url, 'editMessageText',
+                # Use main bot URL — admin has a conversation with main bot, not the chatbot
+                r = _ca_api(BOT_API_URL, 'editMessageText',
                             chat_id=ADMIN_ID, message_id=existing_notify_id, text=notify_txt)
                 edited = r is not None
             if not edited:
-                r = _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
+                r = _ca_api(BOT_API_URL, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
                 if r and isinstance(r, dict):
                     with _ca_edit_notify_lock:
                         _ca_edit_notify_msgs[key] = r.get('message_id')
