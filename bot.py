@@ -3662,7 +3662,7 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
     emoji       = entry.get('emoji', '📨')
     preview     = entry.get('text', '') or '(not cached)'
     sender_id   = entry.get('user_id')
-    if sender_id and int(sender_id) == int(ADMIN_ID):
+    if sender_id and is_admin(sender_id):
         who_line = '👤 ខ្ញុំ'
     else:
         who_line = f"👥 {fname} @{uname}" if uname else f"👥 {fname}"
@@ -3742,8 +3742,9 @@ def _ca_check_deleted(base_url):
         now = time.time()
         for chat_id, msgs in snapshot.items():
             for msg_id, entry in list(msgs.items()):
-                if not CHATBOT_ACTIVE:
-                    return
+                # Allow the scan to finish its current batch even if chatbot is stopping,
+                # so we don't silently miss deletions at shutdown.  The loop thread will
+                # exit naturally on the next iteration after CHATBOT_ACTIVE→False.
                 # Skip messages younger than 2 s — minimal buffer for Telegram to index
                 if now - entry['ts'] < 2:
                     continue
@@ -3812,7 +3813,9 @@ def _chatbot_handle_update(base_url, update):
             for mid in msg_ids:
                 entry = cached.get(mid)
                 if not entry:
-                    # Cache miss — still notify with available info from the event
+                    # Cache miss — still notify with available info from the event.
+                    # No scan_url needed here since this is a business deletion event
+                    # (Telegram already told us the message is gone — no copyMessage needed).
                     chat_name = chat_obj.get('first_name', '') or chat_obj.get('title', '')
                     chat_user = chat_obj.get('username', '')
                     entry = {
@@ -3826,6 +3829,7 @@ def _chatbot_handle_update(base_url, update):
                         'caption':    '',
                         'media_extra': {},
                         'ts':         time.time(),
+                        'scan_url':   None,
                     }
                 _ca_send_delete_notify(base_url, chat_id, mid, entry)
         return
@@ -3843,7 +3847,7 @@ def _chatbot_handle_update(base_url, update):
         if chat_id and user_id and (chat_type == 'private' or is_biz):
             fname    = user.get('first_name') or 'Unknown'
             uname    = user.get('username', '')
-            if int(user_id) == int(ADMIN_ID):
+            if is_admin(user_id):
                 who_line = '👤 ខ្ញុំ'
             else:
                 who_line = f"👥 {fname} @{uname}" if uname else f"👥 {fname}"
@@ -3892,10 +3896,12 @@ def _chatbot_handle_update(base_url, update):
                             oldest = list(_ca_edit_notify_msgs.keys())[:100]
                             for k in oldest:
                                 _ca_edit_notify_msgs.pop(k, None)
-            # Update cache but preserve the original "before" content
+            # Update cache but preserve the original "before" content and the scan_url
             orig_emoji   = (old_entry.get('original_emoji') or old_emoji) if old_entry else old_emoji
             orig_preview = (old_entry.get('original_text')  or old_preview) if old_entry else old_preview
-            _ca_cache_message(chat_id, msg)
+            # Preserve scan_url from the original entry so deletion checks keep using the right token
+            old_scan_url = old_entry.get('scan_url') if old_entry else None
+            _ca_cache_message(chat_id, msg, scan_url=old_scan_url)
             with _chatbot_cache_lock:
                 entry = _chatbot_msg_cache.get(chat_id, {}).get(msg_id)
                 if entry:
@@ -4862,8 +4868,10 @@ def main():
         _start_translate_bot(TRANSLATE_BOT_TOKEN)
         logger.info("Translate Bot resumed from saved state")
 
-    if CHATBOT_ACTIVE and CHATBOT_TOKEN:
+    if CHATBOT_TOKEN:
+        # Start regardless of saved CHATBOT_ACTIVE flag — token presence means user wants it active
         _start_chatbot(CHATBOT_TOKEN)
+        set_setting('CHATBOT_ACTIVE', 'true')
         logger.info("Chat Automation Bot resumed from saved state")
 
     try:
