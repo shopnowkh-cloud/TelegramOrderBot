@@ -83,7 +83,6 @@ CHATBOT_ACTIVE = False
 _chatbot_thread = None
 _chatbot_msg_cache: dict = {}   # {chat_id: {msg_id: {user_id, first_name, text, ts}}}
 _chatbot_cache_lock = threading.Lock()
-_chatbot_monitored_users: dict = {}  # {chat_id: {user_id}} — users who requested monitoring
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
@@ -3532,18 +3531,9 @@ def _chatbot_handle_update(base_url, update):
                     "ខ្ញុំជូនដំណឹងអ្នកពេល message ត្រូវបានលុបនៅក្នុង group ណាមួយ\n\n"
                     "<b>របៀបប្រើ:</b>\n"
                     "1️⃣ បន្ថែម Bot ទៅ group របស់អ្នក\n"
-                    "2️⃣ ផ្ញើ /monitor នៅក្នុង group\n"
-                    "3️⃣ Bot នឹងជូនដំណឹងពេល message ណាមួយត្រូវបានលុប"
+                    "2️⃣ Bot នឹងតាមដានដោយស្វ័យប្រវត្តិ ហើយជូនដំណឹងពេល message ត្រូវបានលុប"
                 ))
         return
-
-    # Group commands
-    if text.startswith('/monitor'):
-        with _chatbot_cache_lock:
-            _chatbot_monitored_users.setdefault(chat_id, set()).add(user_id)
-        fname = html.escape(user.get('first_name', 'អ្នកប្រើ'))
-        _ca_api(base_url, 'sendMessage', chat_id=chat_id, parse_mode='HTML',
-                text=f"✅ <b>{fname}</b> ឥឡូវ Bot នឹងជូនដំណឹងអ្នកពេល message ត្រូវបានលុបក្នុង group នេះ")
 
 def _chatbot_polling_loop(token):
     global CHATBOT_ACTIVE
