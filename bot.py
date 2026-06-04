@@ -3580,6 +3580,10 @@ def _ca_cache_message(chat_id, msg, scan_url=None):
     user_id = user.get('id')
     if not msg_id or not user_id:
         return
+    # Skip messages sent by any bot — these are scan probe copies created by copyMessage.
+    # Caching them causes false-positive deletion alerts when the scan deletes its own copy.
+    if user.get('is_bot'):
+        return
     emoji, preview = _ca_describe_msg(msg)
 
     # Extract media info so deletion notifications can forward the actual content
