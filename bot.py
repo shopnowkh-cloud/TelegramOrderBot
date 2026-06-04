@@ -3570,8 +3570,11 @@ def _ca_describe_msg(msg):
         return '↩️', 'Forwarded message'
     return '📨', 'Message'
 
-def _ca_cache_message(chat_id, msg):
-    """Store a message in the deletion-detection cache."""
+def _ca_cache_message(chat_id, msg, scan_url=None):
+    """Store a message in the deletion-detection cache.
+    scan_url: the base API URL to use when checking if this message still exists.
+              Defaults to None (caller supplies at scan time). Pass BOT_API_URL for
+              messages received by the main bot so copyMessage uses the right token."""
     msg_id  = msg.get('message_id')
     user    = msg.get('from') or {}
     user_id = user.get('id')
@@ -3631,6 +3634,7 @@ def _ca_cache_message(chat_id, msg):
         'file_id':    file_id,
         'caption':    (msg.get('caption') or '').strip(),
         'media_extra': media_extra,
+        'scan_url':   scan_url,   # which bot token to use for copyMessage checks
     }
     with _chatbot_cache_lock:
         _chatbot_msg_cache.setdefault(chat_id, {})[msg_id] = entry
@@ -3750,8 +3754,10 @@ def _ca_check_deleted(base_url):
                             _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
                         continue
                 resp = None
+                # Use the token that originally received this message for copyMessage
+                scan_url = entry.get('scan_url') or base_url
                 try:
-                    r = http.post(f"{base_url}copyMessage", json={
+                    r = http.post(f"{scan_url}copyMessage", json={
                         'chat_id':              chat_id,
                         'from_chat_id':         chat_id,
                         'message_id':           msg_id,
@@ -3759,7 +3765,7 @@ def _ca_check_deleted(base_url):
                     }, timeout=10).json()
                     if r.get('ok'):
                         copy_id = r['result']['message_id']
-                        http.post(f"{base_url}deleteMessage",
+                        http.post(f"{scan_url}deleteMessage",
                                   json={'chat_id': chat_id, 'message_id': copy_id}, timeout=8)
                         resp = True
                     else:
@@ -4339,6 +4345,11 @@ def handle_message(update):
         text       = message.get('text', '')
         user       = message.get('from', {})
         user_id    = user.get('id')
+
+        # Cache every private-chat message so the Chat Automation scan can detect deletions
+        # using the main bot token (the only token that has access to this chat).
+        if message.get('chat', {}).get('type') == 'private':
+            _ca_cache_message(chat_id, message, scan_url=BOT_API_URL)
 
         _set_reply_to_id(message_id)
         logger.info(f"Received message from user {user.get('first_name', 'Unknown')} (ID: {user_id}): {text}")
