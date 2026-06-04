@@ -91,8 +91,11 @@ _ca_edit_notify_msgs: dict = {}          # {(chat_id, msg_id): admin_notify_msg_
 _ca_edit_notify_lock = threading.Lock()
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
+_TG_EMOJI_RE = re.compile(r'<tg-emoji emoji-id="(\d+)">(.*?)</tg-emoji>', re.DOTALL)
+
 def _process_inline_keyboard(markup):
-    """Add text_parse_mode=HTML to buttons containing <tg-emoji> tags (Bot API 9.4)."""
+    """Convert <tg-emoji emoji-id="ID">FALLBACK</tg-emoji> in button text →
+    icon_custom_emoji_id=ID (Bot API 9.4) + clean text with fallback kept."""
     if not isinstance(markup, dict) or 'inline_keyboard' not in markup:
         return markup
     new_rows = []
@@ -100,9 +103,19 @@ def _process_inline_keyboard(markup):
         new_row = []
         for btn in row:
             if isinstance(btn, dict) and '<tg-emoji' in (btn.get('text') or ''):
-                new_btn = dict(btn)
-                new_btn['text_parse_mode'] = 'HTML'
-                new_row.append(new_btn)
+                text = btn['text']
+                m = _TG_EMOJI_RE.search(text)
+                if m:
+                    emoji_id  = m.group(1)
+                    fallback  = m.group(2)
+                    # Remove the tag, keep fallback + rest of text
+                    clean = _TG_EMOJI_RE.sub(fallback, text).strip()
+                    new_btn = dict(btn)
+                    new_btn['text'] = clean
+                    new_btn['icon_custom_emoji_id'] = emoji_id
+                    new_row.append(new_btn)
+                else:
+                    new_row.append(btn)
             else:
                 new_row.append(btn)
         new_rows.append(new_row)
