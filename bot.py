@@ -83,6 +83,7 @@ CHATBOT_ACTIVE = False
 _chatbot_thread = None
 _chatbot_msg_cache: dict = {}   # {chat_id: {msg_id: {user_id, first_name, text, ts}}}
 _chatbot_cache_lock = threading.Lock()
+_chatbot_scan_lock  = threading.Lock()   # prevents concurrent deletion scans
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
@@ -3461,44 +3462,52 @@ def _ca_cache_message(chat_id, msg):
         }
 
 def _ca_check_deleted(base_url):
-    """Background scan: try to forward each cached message; notify on failure."""
-    with _chatbot_cache_lock:
-        snapshot = {cid: dict(msgs) for cid, msgs in _chatbot_msg_cache.items()}
-    for chat_id, msgs in snapshot.items():
-        for msg_id, entry in list(msgs.items()):
-            if not CHATBOT_ACTIVE:
-                return
-            # Try to copy the message to itself as a silent existence check
-            resp = None
-            try:
-                r = http.post(f"{base_url}copyMessage", json={
-                    'chat_id':        chat_id,
-                    'from_chat_id':   chat_id,
-                    'message_id':     msg_id,
-                    'disable_notification': True,
-                }, timeout=10).json()
-                if r.get('ok'):
-                    # Message exists — delete the test copy immediately
-                    copy_id = r['result']['message_id']
-                    http.post(f"{base_url}deleteMessage",
-                              json={'chat_id': chat_id, 'message_id': copy_id}, timeout=8)
-                    resp = True
-                elif 'not found' in (r.get('description') or '').lower():
-                    resp = False
-            except Exception:
-                pass
-            if resp is False:
-                # Message was deleted — notify admin
-                fname    = entry.get('first_name') or 'Unknown'
-                uname    = entry.get('username', '')
-                preview  = entry['text'][:200] if entry['text'] else '(media/file)'
-                who_line = f"{fname} @{uname}" if uname else fname
-                notify_txt = f"{who_line} deleted a message:\n\n{preview}"
-                _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
-                        text=notify_txt)
-                with _chatbot_cache_lock:
-                    _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
-            time.sleep(0.15)  # Respect rate limits
+    """Background scan: try to copy each cached message; notify admin if deleted."""
+    # Skip if a previous scan is still running
+    if not _chatbot_scan_lock.acquire(blocking=False):
+        return
+    try:
+        with _chatbot_cache_lock:
+            snapshot = {cid: dict(msgs) for cid, msgs in _chatbot_msg_cache.items()}
+        now = time.time()
+        for chat_id, msgs in snapshot.items():
+            for msg_id, entry in list(msgs.items()):
+                if not CHATBOT_ACTIVE:
+                    return
+                # Skip messages younger than 30 s — Telegram may not index them yet
+                if now - entry['ts'] < 30:
+                    continue
+                resp = None
+                try:
+                    r = http.post(f"{base_url}copyMessage", json={
+                        'chat_id':              chat_id,
+                        'from_chat_id':         chat_id,
+                        'message_id':           msg_id,
+                        'disable_notification': True,
+                    }, timeout=10).json()
+                    if r.get('ok'):
+                        copy_id = r['result']['message_id']
+                        http.post(f"{base_url}deleteMessage",
+                                  json={'chat_id': chat_id, 'message_id': copy_id}, timeout=8)
+                        resp = True
+                    else:
+                        desc = (r.get('description') or '').lower()
+                        if 'not found' in desc or 'message to copy not found' in desc:
+                            resp = False
+                except Exception:
+                    pass
+                if resp is False:
+                    fname      = entry.get('first_name') or 'Unknown'
+                    uname      = entry.get('username', '')
+                    preview    = entry['text'][:200] if entry['text'] else '(media/file)'
+                    who_line   = f"{fname} @{uname}" if uname else fname
+                    notify_txt = f"{who_line} deleted a message:\n\n{preview}"
+                    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
+                    with _chatbot_cache_lock:
+                        _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
+                time.sleep(0.1)  # rate-limit between checks
+    finally:
+        _chatbot_scan_lock.release()
 
 def _chatbot_handle_update(base_url, update):
     # Handle Telegram Business deleted messages directly
@@ -3586,8 +3595,8 @@ def _chatbot_polling_loop(token):
             else:
                 logger.warning(f"Chat Automation getUpdates: {data.get('description')}")
                 time.sleep(3)
-            # Run deleted-message scan every 5 minutes
-            if time.time() - last_scan >= 300:
+            # Run deleted-message scan every 10 seconds for near-instant detection
+            if time.time() - last_scan >= 10:
                 background_pool.submit(_ca_check_deleted, base_url)
                 last_scan = time.time()
         except Exception as e:
