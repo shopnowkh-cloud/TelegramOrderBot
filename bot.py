@@ -4359,11 +4359,6 @@ def handle_message(update):
         user       = message.get('from', {})
         user_id    = user.get('id')
 
-        # Cache every private-chat message so the Chat Automation scan can detect deletions
-        # using the main bot token (the only token that has access to this chat).
-        if message.get('chat', {}).get('type') == 'private':
-            _ca_cache_message(chat_id, message, scan_url=BOT_API_URL)
-
         _set_reply_to_id(message_id)
         logger.info(f"Received message from user {user.get('first_name', 'Unknown')} (ID: {user_id}): {text}")
         notify_admin_new_user(user)
