@@ -3678,8 +3678,17 @@ def _chatbot_handle_update(base_url, update):
             # Retrieve original content from cache (before any edits)
             with _chatbot_cache_lock:
                 old_entry = _chatbot_msg_cache.get(chat_id, {}).get(msg_id)
-            old_emoji   = old_entry.get('emoji', '📨') if old_entry else '📨'
-            old_preview = old_entry.get('text', '(unknown)') if old_entry else '(unknown)'
+            if old_entry:
+                old_emoji   = old_entry.get('emoji', '📨')
+                old_preview = old_entry.get('text', '(not cached)')
+            else:
+                # Cache miss (e.g. bot restarted) — infer type from the edited message
+                # so we never show the misleading "📨 (unknown)" fallback.
+                old_emoji, _ = _ca_describe_msg(msg)
+                if msg.get('location', {}).get('live_period') or msg.get('location'):
+                    old_preview = 'Live location (កូអរដោនេមុន / previous position)'
+                else:
+                    old_preview = '(មិនទាន់ត្រូវបានរក្សាទុក / not cached)'
             # Preserve original "before" so repeated live-location edits keep showing the real original
             if old_entry and old_entry.get('original_emoji'):
                 old_emoji   = old_entry['original_emoji']
