@@ -1274,7 +1274,7 @@ BTN_ADMINS          = '👑 គ្រប់គ្រង Admin'
 BTN_MAINTENANCE     = '🛠 Maintenance Mode'
 BTN_BROADCAST       = '📢 ផ្សាយព័ត៌មាន'
 BTN_BACK_HOME       = '🏠 ត្រឡប់ទៅម៉ឺនុយដើម'
-BTN_BACK_SETTINGS   = '↩️ ត្រឡប់ទៅកំណត់'
+BTN_BACK_SETTINGS   = '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់ទៅកំណត់'
 BTN_PAYMENT_EDIT    = '✏️ ប្តូរឈ្មោះ Payment'
 BTN_BAKONG_EDIT     = '✏️ ប្តូរ Bakong Token'
 BTN_CHANNEL_EDIT    = '✏️ ប្តូរ Channel ID'
@@ -1357,21 +1357,21 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
 ]}
 SETTINGS_PAY_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរឈ្មោះ Payment', 'callback_data': 's:pay_edit'}],
-    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+    [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',            'callback_data': 's:main'}],
 ]}
 SETTINGS_BAK_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរ Bakong Token', 'callback_data': 's:bak_edit'}],
-    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+    [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',            'callback_data': 's:main'}],
 ]}
 SETTINGS_CH_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរ Channel ID',   'callback_data': 's:ch_edit'},
      {'text': '🗑 លុប Channel ID',     'callback_data': 's:ch_clear'}],
-    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+    [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',            'callback_data': 's:main'}],
 ]}
 SETTINGS_ADM_IKB = {'inline_keyboard': [
     [{'text': '➕ បន្ថែម Admin',       'callback_data': 's:adm_add'},
      {'text': '➖ ដក Admin',           'callback_data': 's:adm_rm'}],
-    [{'text': '↩️ ត្រឡប់',            'callback_data': 's:main'}],
+    [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',            'callback_data': 's:main'}],
 ]}
 SETTINGS_CANCEL_IKB = {'inline_keyboard': [
     [{'text': '🚫 បោះបង់',            'callback_data': 's:cancel_input'}],
@@ -1382,7 +1382,7 @@ def _build_settings_maint_ikb():
     cb  = 's:mnt_off'  if MAINTENANCE_MODE else 's:mnt_on'
     return {'inline_keyboard': [
         [{'text': btn, 'callback_data': cb}],
-        [{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}],
+        [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់', 'callback_data': 's:main'}],
     ]}
 def _build_settings_tts_ikb():
     running = CLONE_BOT_ACTIVE and _clone_bot_thread and _clone_bot_thread.is_alive()
@@ -1392,7 +1392,7 @@ def _build_settings_tts_ikb():
         [{'text': BTN_CLONE_SET_TOKEN, 'callback_data': 's:tts_token'},
          {'text': BTN_CLONE_TOKEN_CLEAR, 'callback_data': 's:tts_clear'}],
         [{'text': '🌐 Translate Bot',  'callback_data': 's:tr'},
-         {'text': '↩️ ត្រឡប់',        'callback_data': 's:main'}],
+         {'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',        'callback_data': 's:main'}],
     ]}
 def _build_settings_tr_ikb():
     running = TRANSLATE_BOT_ACTIVE and _translate_bot_thread and _translate_bot_thread.is_alive()
@@ -1402,7 +1402,7 @@ def _build_settings_tr_ikb():
         [{'text': BTN_TR_SET_TOKEN,  'callback_data': 's:tr_token'},
          {'text': BTN_TR_TOKEN_CLEAR,'callback_data': 's:tr_clear'}],
         [{'text': '🎙 TTS Bot',       'callback_data': 's:tts'},
-         {'text': '↩️ ត្រឡប់',       'callback_data': 's:main'}],
+         {'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',       'callback_data': 's:main'}],
     ]}
 
 def _build_settings_chatbot_ikb():
@@ -1412,7 +1412,7 @@ def _build_settings_chatbot_ikb():
           'callback_data': 's:ca_stop' if running else 's:ca_start'}],
         [{'text': BTN_CA_SET_TOKEN,   'callback_data': 's:ca_token'},
          {'text': BTN_CA_TOKEN_CLEAR, 'callback_data': 's:ca_clear'}],
-        [{'text': '↩️ ត្រឡប់',        'callback_data': 's:main'}],
+        [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',        'callback_data': 's:main'}],
     ]}
 
 # Legacy compat aliases (some internal callers reference these names)
@@ -1581,7 +1581,7 @@ def _show_delete_type_menu_inline(chat_id, user_id=None):
     ]
     if not types:
         _settings_edit(chat_id, uid, "⚠️ <b>មិនមានប្រភេទ Account ណាមួយទេ!</b>",
-                       {'inline_keyboard': [[{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}]]})
+                       {'inline_keyboard': [[{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់', 'callback_data': 's:main'}]]})
         return
     rows = []
     for i in range(0, len(types), 2):
@@ -1592,7 +1592,7 @@ def _show_delete_type_menu_inline(chat_id, user_id=None):
             label = f"{_short_label(t)} ({count} · ${price})"
             row.append({'text': label, 'callback_data': f"dts:{_type_callback_id(t)}"})
         rows.append(row)
-    rows.append([{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}])
+    rows.append([{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់', 'callback_data': 's:main'}])
     _settings_edit(chat_id, uid,
                    "🗑 <b>ជ្រើសរើសប្រភេទ Account ដែលចង់លុប៖</b>",
                    {'inline_keyboard': rows})
@@ -1984,13 +1984,13 @@ def _run_broadcast(admin_chat_id, source_message_id, use_copy=False):
             f"⛔ បាន​ប្លុក/លុប:  {blocked}\n"
             f"❌ បរាជ័យ:        {failed}"
         )
-        back_ikb = {'inline_keyboard': [[{'text': '↩️ ត្រឡប់ទៅកំណត់', 'callback_data': 's:main'}]]}
+        back_ikb = {'inline_keyboard': [[{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់ទៅកំណត់', 'callback_data': 's:main'}]]}
         send_message(admin_chat_id, summary, parse_mode="HTML",
                      reply_to_message_id=False, reply_markup=back_ikb)
     except Exception as e:
         logger.error(f"Broadcast crashed: {e}")
         try:
-            back_ikb = {'inline_keyboard': [[{'text': '↩️ ត្រឡប់ទៅកំណត់', 'callback_data': 's:main'}]]}
+            back_ikb = {'inline_keyboard': [[{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់ទៅកំណត់', 'callback_data': 's:main'}]]}
             send_message(admin_chat_id,
                          f"❌ Broadcast error: <code>{html.escape(str(e))}</code>",
                          parse_mode="HTML", reply_to_message_id=False,
@@ -2278,7 +2278,7 @@ def handle_callback_query(update):
             save_data()
             _settings_edit(chat_id, user_id,
                 f"✅ <b>បានលុបប្រភេទ Account <code>{html.escape(type_name)}</code> ចំនួន {count} records ដោយជោគជ័យ!</b>",
-                {'inline_keyboard': [[{'text': '↩️ ត្រឡប់', 'callback_data': 's:del_type'}]]})
+                {'inline_keyboard': [[{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់', 'callback_data': 's:del_type'}]]})
             return
 
         elif callback_data == 'dtcancel' and is_admin(user_id):
@@ -2589,7 +2589,7 @@ def handle_callback_query(update):
                             del user_sessions[user_id]
                     save_sessions_async()
                 _settings_edit(chat_id, user_id, "🚫 <b>បានបោះបង់ការផ្សាយ</b>",
-                               {'inline_keyboard': [[{'text': '↩️ ត្រឡប់', 'callback_data': 's:main'}]]})
+                               {'inline_keyboard': [[{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់', 'callback_data': 's:main'}]]})
                 return
             return
 
@@ -2691,7 +2691,7 @@ def handle_callback_query(update):
                              for code, name in items[i:i+3]])
             rows.append([
                 {'text': '🔇 បិទបកប្រែ', 'callback_data': f"cbm_lang:{bot_id}:off"},
-                {'text': '↩️ ត្រឡប់',   'callback_data': f"cbm:{bot_id}"},
+                {'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',   'callback_data': f"cbm:{bot_id}"},
             ])
             _tg_api('editMessageText',
                     chat_id=chat_id,
@@ -3942,7 +3942,7 @@ def _show_clone_bot_detail(chat_id, bot_id, edit_msg_id=None):
         [{'text': '🔑 Token', 'callback_data': f"cbm_token:{bot_id}"},
          {'text': '🗑 លុប',   'callback_data': f"cbm_del:{bot_id}"}],
         [{'text': f"🌐 ភាសា: {dlang}", 'callback_data': f"cbm_trl:{bot_id}"}],
-        [{'text': '↩️ ត្រឡប់', 'callback_data': 'cbm_list'}],
+        [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់', 'callback_data': 'cbm_list'}],
     ]}
     if edit_msg_id:
         _tg_api('editMessageText', chat_id=chat_id, message_id=edit_msg_id,
@@ -4507,7 +4507,7 @@ def handle_message(update):
                         _settings_edit(chat_id, user_id,
                             f"✅ <b>បានបញ្ចូល Account ដោយជោគជ័យ</b>\n\n"
                             f"<blockquote>🔹 ចំនួន: {count}\n🔹 ប្រភេទ: {html.escape(account_type)}\n🔹 តម្លៃ: ${price}</blockquote>",
-                            {'inline_keyboard': [[{'text': '↩️ ត្រឡប់ទៅ Settings', 'callback_data': 's:main'}]]})
+                            {'inline_keyboard': [[{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់ទៅ Settings', 'callback_data': 's:main'}]]})
                         logger.info(f"Admin {user_id} added {count} accounts of type {account_type} with price ${price}")
 
                     except ValueError:
