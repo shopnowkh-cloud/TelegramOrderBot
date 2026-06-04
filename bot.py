@@ -3054,7 +3054,7 @@ def _clone_handle_update(base_url, update):
             cur_speed = _clone_bot_prefs.get(user_id, {}).get('speed', 'x1')
             speed_kb = {'inline_keyboard': [[
                 {
-                    'text': f"✅ {s}" if s == cur_speed else s,
+                    'text': s,
                     'callback_data': f"ttv_speed:{s}",
                     **(({'style': 'success'}) if s == cur_speed else {}),
                 }
