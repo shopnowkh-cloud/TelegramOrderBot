@@ -3657,7 +3657,11 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
     uname       = entry.get('username', '')
     emoji       = entry.get('emoji', '📨')
     preview     = entry.get('text', '') or '(not cached)'
-    who_line    = f"{fname} @{uname}" if uname else fname
+    sender_id   = entry.get('user_id')
+    if sender_id and int(sender_id) == int(ADMIN_ID):
+        who_line = '👤 ខ្ញុំ'
+    else:
+        who_line = f"👥 {fname} @{uname}" if uname else f"👥 {fname}"
     header      = f"🗑 {who_line} លុបសារ:"
     media_type  = entry.get('media_type')
     file_id     = entry.get('file_id')
@@ -3793,15 +3797,31 @@ def _chatbot_handle_update(base_url, update):
     # Handle Telegram Business deleted messages directly
     if 'deleted_business_messages' in update:
         deleted = update['deleted_business_messages']
-        chat_id = deleted.get('chat', {}).get('id')
-        msg_ids = deleted.get('message_ids', [])
+        chat_obj = deleted.get('chat', {})
+        chat_id  = chat_obj.get('id')
+        msg_ids  = deleted.get('message_ids', [])
         if chat_id and msg_ids:
             with _chatbot_cache_lock:
                 cached = dict(_chatbot_msg_cache.get(chat_id, {}))
             for mid in msg_ids:
                 entry = cached.get(mid)
-                if entry:
-                    _ca_send_delete_notify(base_url, chat_id, mid, entry)
+                if not entry:
+                    # Cache miss — still notify with available info from the event
+                    chat_name = chat_obj.get('first_name', '') or chat_obj.get('title', '')
+                    chat_user = chat_obj.get('username', '')
+                    entry = {
+                        'user_id':    None,
+                        'first_name': chat_name,
+                        'username':   chat_user,
+                        'emoji':      '📨',
+                        'text':       '(មិនទាន់ត្រូវបានរក្សាទុក / not cached)',
+                        'media_type': None,
+                        'file_id':    None,
+                        'caption':    '',
+                        'media_extra': {},
+                        'ts':         time.time(),
+                    }
+                _ca_send_delete_notify(base_url, chat_id, mid, entry)
         return
 
     # Handle edited messages (regular + business)
@@ -3817,7 +3837,10 @@ def _chatbot_handle_update(base_url, update):
         if chat_id and user_id and (chat_type == 'private' or is_biz):
             fname    = user.get('first_name') or 'Unknown'
             uname    = user.get('username', '')
-            who_line = f"{fname} @{uname}" if uname else fname
+            if int(user_id) == int(ADMIN_ID):
+                who_line = '👤 ខ្ញុំ'
+            else:
+                who_line = f"👥 {fname} @{uname}" if uname else f"👥 {fname}"
             # Retrieve original content from cache (before any edits)
             with _chatbot_cache_lock:
                 old_entry = _chatbot_msg_cache.get(chat_id, {}).get(msg_id)
