@@ -3517,23 +3517,20 @@ def _chatbot_handle_update(base_url, update):
     if not chat_id or not user_id:
         return
 
-    # Cache all group/supergroup messages for deletion detection
-    if chat_type in ('group', 'supergroup'):
-        _ca_cache_message(chat_id, msg)
-
-    # Private chat commands
+    # Cache all private/personal chat messages for deletion detection
     if chat_type == 'private':
         if text.startswith('/start'):
             _ca_api(base_url, 'sendMessage', chat_id=chat_id,
                 parse_mode='HTML',
                 text=(
                     "🤖 <b>Chat Automation Bot</b>\n\n"
-                    "ខ្ញុំជូនដំណឹងអ្នកពេល message ត្រូវបានលុបនៅក្នុង group ណាមួយ\n\n"
+                    "ខ្ញុំជូនដំណឹងអ្នកពេល message ត្រូវបានលុបក្នុង chat នេះ\n\n"
                     "<b>របៀបប្រើ:</b>\n"
-                    "1️⃣ បន្ថែម Bot ទៅ group របស់អ្នក\n"
-                    "2️⃣ Bot នឹងតាមដានដោយស្វ័យប្រវត្តិ ហើយជូនដំណឹងពេល message ត្រូវបានលុប"
+                    "ផ្ញើ message ណាមួយមកខ្ញុំ — Bot នឹងតាមដានដោយស្វ័យប្រវត្តិ ហើយជូនដំណឹងពេល message ត្រូវបានលុប"
                 ))
-        return
+            return
+        # Cache every private message for deletion tracking
+        _ca_cache_message(chat_id, msg)
 
 def _chatbot_polling_loop(token):
     global CHATBOT_ACTIVE
@@ -3854,9 +3851,9 @@ def _show_chatbot_menu(chat_id, user_id=None):
         f"{bot_info_line}"
         f"🔑 Token: {token_disp}\n"
         f"📡 ស្ថានភាព: {status}\n"
-        f"💬 Groups ត្រូវតាមដាន: {monitored_count}\n"
+        f"💬 Personal chats ត្រូវតាមដាន: {monitored_count}\n"
         f"📝 Messages cached: {cached_msgs}\n\n"
-        f"<i>Bot ត្រួតពិនិត្យ messages ក្នុង group ហើយជូនដំណឹងពេល message ត្រូវបានលុប</i>"
+        f"<i>Bot ត្រួតពិនិត្យ messages ក្នុង personal chat ហើយជូនដំណឹងពេល message ត្រូវបានលុប</i>"
     )
     _settings_edit(chat_id, uid, msg, _build_settings_chatbot_ikb())
 
