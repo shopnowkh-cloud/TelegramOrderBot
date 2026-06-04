@@ -2137,7 +2137,7 @@ def deliver_accounts(chat_id, user_id, session, payment_data=None, user_name='')
 
 # ── Callback query handler ────────────────────────────────────────────────────
 def handle_callback_query(update):
-    global CHANNEL_ID, MAINTENANCE_MODE, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN, TRANSLATE_BOT_ACTIVE
+    global CHANNEL_ID, MAINTENANCE_MODE, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN, TRANSLATE_BOT_ACTIVE, CHATBOT_TOKEN, CHATBOT_ACTIVE
     _set_reply_to_id(None)
     try:
         callback_query = update.get('callback_query')
@@ -3896,7 +3896,7 @@ def _dispatch_settings_panel(chat_id, user_id, key):
         _settings_edit(chat_id, user_id, _settings_main_text(), SETTINGS_MAIN_IKB)
 # ── Main message handler ──────────────────────────────────────────────────────
 def handle_message(update):
-    global MAINTENANCE_MODE, PAYMENT_NAME, CHANNEL_ID, CLONE_BOT_TOKEN
+    global MAINTENANCE_MODE, PAYMENT_NAME, CHANNEL_ID, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN, CHATBOT_TOKEN
     try:
         if 'callback_query' in update:
             handle_callback_query(update)
