@@ -77,6 +77,14 @@ _translate_bot_thread = None
 _translate_bot_prefs: dict = {}   # {user_id: {lang_code, lang_name}}
 _admin_settings_msg: dict = {}   # {user_id: message_id} — settings panel to edit in place
 
+# ── Chat Automation Bot ────────────────────────────────────────────────────────
+CHATBOT_TOKEN  = ""
+CHATBOT_ACTIVE = False
+_chatbot_thread = None
+_chatbot_msg_cache: dict = {}   # {chat_id: {msg_id: {user_id, first_name, text, ts}}}
+_chatbot_cache_lock = threading.Lock()
+_chatbot_monitored_users: dict = {}  # {chat_id: {user_id}} — users who requested monitoring
+
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
     """Call a Telegram Bot API method. Returns the 'result' field or None."""
@@ -855,6 +863,13 @@ if _saved_tr_token:
 _saved_tr_active = get_setting('TRANSLATE_BOT_ACTIVE')
 if _saved_tr_active:
     TRANSLATE_BOT_ACTIVE = (str(_saved_tr_active).lower() == 'true')
+_saved_ca_token = get_setting('CHATBOT_TOKEN')
+if _saved_ca_token:
+    CHATBOT_TOKEN = _saved_ca_token
+    logger.info("Loaded CHATBOT_TOKEN from DB")
+_saved_ca_active = get_setting('CHATBOT_ACTIVE')
+if _saved_ca_active:
+    CHATBOT_ACTIVE = (str(_saved_ca_active).lower() == 'true')
 
 # ── Session / account storage ─────────────────────────────────────────────────
 user_sessions: dict = {}
@@ -1280,6 +1295,10 @@ BTN_TR_START          = '▶️ ចាប់ផ្តើម Translate Bot'
 BTN_TR_STOP           = '⏹ បញ្ឈប់ Translate Bot'
 BTN_TR_SET_TOKEN      = '🔑 Token — Translate'
 BTN_TR_TOKEN_CLEAR    = '🗑 លុប — Translate'
+BTN_CA_START          = '▶️ ចាប់ផ្តើម Chat Automation'
+BTN_CA_STOP           = '⏹ បញ្ឈប់ Chat Automation'
+BTN_CA_SET_TOKEN      = '🔑 Token — Chat'
+BTN_CA_TOKEN_CLEAR    = '🗑 លុប — Chat'
 
 TRANSLATE_LANGUAGES = {
     "km": "🇰🇭 ខ្មែរ",
@@ -1331,6 +1350,7 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
     [{'text': 'បង្កើតសំឡេង Ai',     'callback_data': 's:tts',  'style': 'primary'}],
     [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr',   'style': 'primary'}],
+    [{'text': 'Chat Automation',    'callback_data': 's:ca',   'style': 'primary'}],
 ]}
 SETTINGS_PAY_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរឈ្មោះ Payment', 'callback_data': 's:pay_edit'}],
@@ -1380,6 +1400,16 @@ def _build_settings_tr_ikb():
          {'text': BTN_TR_TOKEN_CLEAR,'callback_data': 's:tr_clear'}],
         [{'text': '🎙 TTS Bot',       'callback_data': 's:tts'},
          {'text': '↩️ ត្រឡប់',       'callback_data': 's:main'}],
+    ]}
+
+def _build_settings_chatbot_ikb():
+    running = CHATBOT_ACTIVE and _chatbot_thread and _chatbot_thread.is_alive()
+    return {'inline_keyboard': [
+        [{'text': BTN_CA_STOP if running else BTN_CA_START,
+          'callback_data': 's:ca_stop' if running else 's:ca_start'}],
+        [{'text': BTN_CA_SET_TOKEN,   'callback_data': 's:ca_token'},
+         {'text': BTN_CA_TOKEN_CLEAR, 'callback_data': 's:ca_clear'}],
+        [{'text': '↩️ ត្រឡប់',        'callback_data': 's:main'}],
     ]}
 
 # Legacy compat aliases (some internal callers reference these names)
@@ -1684,7 +1714,7 @@ def _start_add_account_flow(chat_id, user_id, message_id=None):
     )
 
 def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
-    global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN
+    global PAYMENT_NAME, BAKONG_TOKEN, khqr_client, CHANNEL_ID, EXTRA_ADMIN_IDS, CLONE_BOT_TOKEN, TRANSLATE_BOT_TOKEN, CHATBOT_TOKEN
 
     raw         = (text or '').strip()
     sess        = user_sessions.get(user_id, {})
@@ -1846,6 +1876,34 @@ def _handle_admin_settings_input(chat_id, user_id, message_id, key, text):
                 del user_sessions[user_id]
         save_sessions_async()
         _show_translate_bot_menu(chat_id, user_id)
+        return True
+
+    if key == 'chatbot_token':
+        if not raw:
+            _settings_edit(chat_id, user_id,
+                "🔑 <b>Chat Automation Token</b>\n\nសូមផ្ញើ Bot Token\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
+            return True
+        try:
+            test_resp = http.get(f"https://api.telegram.org/bot{raw}/getMe", timeout=10).json()
+            if not test_resp.get('ok'):
+                _settings_edit(chat_id, user_id,
+                    f"❌ <b>Token មិនត្រឹមត្រូវ</b>\n\n{test_resp.get('description', 'Unknown error')}\n\n"
+                    "<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>", SETTINGS_CANCEL_IKB)
+                return True
+        except Exception as e:
+            _settings_edit(chat_id, user_id,
+                f"❌ <b>មិនអាចភ្ជាប់ Telegram</b>\n\n{e}\n\n<i>ចុច 🚫 បោះបង់ ដើម្បីបោះបង់</i>",
+                SETTINGS_CANCEL_IKB)
+            return True
+        CHATBOT_TOKEN = raw
+        set_setting('CHATBOT_TOKEN', raw)
+        delete_message_async(chat_id, message_id)
+        with _data_lock:
+            if user_id in user_sessions:
+                del user_sessions[user_id]
+        save_sessions_async()
+        _show_chatbot_menu(chat_id, user_id)
         return True
 
     if key == 'broadcast':
@@ -2466,6 +2524,35 @@ def handle_callback_query(update):
                 set_setting('TRANSLATE_BOT_TOKEN', '')
                 set_setting('TRANSLATE_BOT_ACTIVE', 'false')
                 _show_translate_bot_menu(chat_id, user_id)
+                return
+            if action == 'ca':
+                _show_chatbot_menu(chat_id, user_id)
+                return
+            if action == 'ca_start':
+                if not CHATBOT_TOKEN:
+                    answer_callback(callback_query['id'], text='❌ ស្អម​កំណត់ Token ជា​មុន​សិន', show_alert=True)
+                    _show_chatbot_menu(chat_id, user_id)
+                    return
+                _start_chatbot(CHATBOT_TOKEN)
+                set_setting('CHATBOT_ACTIVE', 'true')
+                _show_chatbot_menu(chat_id, user_id)
+                return
+            if action == 'ca_stop':
+                _stop_chatbot()
+                set_setting('CHATBOT_ACTIVE', 'false')
+                _show_chatbot_menu(chat_id, user_id)
+                return
+            if action == 'ca_token':
+                _prompt_admin_input(chat_id, user_id, 'chatbot_token',
+                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ Chat Automation Bot\n\n"
+                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'ca')
+                return
+            if action == 'ca_clear':
+                _stop_chatbot()
+                CHATBOT_TOKEN = ""
+                set_setting('CHATBOT_TOKEN', '')
+                set_setting('CHATBOT_ACTIVE', 'false')
+                _show_chatbot_menu(chat_id, user_id)
                 return
             if action == 'add_acc':
                 _start_add_account_flow(chat_id, user_id, callback_query['message']['message_id'])
@@ -3337,6 +3424,181 @@ def _stop_translate_bot():
     TRANSLATE_BOT_ACTIVE = False
     _translate_bot_thread = None
 
+# ── Chat Automation Bot engine ────────────────────────────────────────────────
+def _ca_api(base_url, method, **kwargs):
+    try:
+        resp = http.post(f"{base_url}{method}",
+                         json={k: v for k, v in kwargs.items() if v is not None}, timeout=15)
+        result = resp.json()
+        if result.get('ok'):
+            return result.get('result')
+        logger.debug(f"CA API {method}: {result.get('description')}")
+    except Exception as e:
+        logger.error(f"CA API {method} error: {e}")
+    return None
+
+def _ca_cache_message(chat_id, msg):
+    """Store a message in the deletion-detection cache."""
+    msg_id    = msg.get('message_id')
+    user      = msg.get('from') or {}
+    user_id   = user.get('id')
+    text      = msg.get('text') or msg.get('caption') or ''
+    if not msg_id or not user_id:
+        return
+    entry = {
+        'user_id':    user_id,
+        'first_name': user.get('first_name', ''),
+        'text':       text[:200],
+        'ts':         time.time(),
+    }
+    with _chatbot_cache_lock:
+        _chatbot_msg_cache.setdefault(chat_id, {})[msg_id] = entry
+        # Keep cache size manageable — drop messages older than 2 hours
+        cutoff = time.time() - 7200
+        _chatbot_msg_cache[chat_id] = {
+            mid: e for mid, e in _chatbot_msg_cache[chat_id].items()
+            if e['ts'] >= cutoff
+        }
+
+def _ca_check_deleted(base_url):
+    """Background scan: try to forward each cached message; notify on failure."""
+    with _chatbot_cache_lock:
+        snapshot = {cid: dict(msgs) for cid, msgs in _chatbot_msg_cache.items()}
+    for chat_id, msgs in snapshot.items():
+        for msg_id, entry in list(msgs.items()):
+            if not CHATBOT_ACTIVE:
+                return
+            # Try to copy the message to itself as a silent existence check
+            resp = None
+            try:
+                r = http.post(f"{base_url}copyMessage", json={
+                    'chat_id':        chat_id,
+                    'from_chat_id':   chat_id,
+                    'message_id':     msg_id,
+                    'disable_notification': True,
+                }, timeout=10).json()
+                if r.get('ok'):
+                    # Message exists — delete the test copy immediately
+                    copy_id = r['result']['message_id']
+                    http.post(f"{base_url}deleteMessage",
+                              json={'chat_id': chat_id, 'message_id': copy_id}, timeout=8)
+                    resp = True
+                elif 'not found' in (r.get('description') or '').lower():
+                    resp = False
+            except Exception:
+                pass
+            if resp is False:
+                # Message was deleted — notify the original sender
+                uid        = entry['user_id']
+                fname      = html.escape(entry['first_name'] or 'អ្នកប្រើ')
+                preview    = html.escape(entry['text'][:80]) if entry['text'] else '<i>(media)</i>'
+                notify_txt = (
+                    f"🗑 <b>Message ត្រូវបានលុប</b>\n\n"
+                    f"👤 អ្នកផ្ញើ: {fname}\n"
+                    f"💬 មាតិកា: {preview}\n"
+                    f"🕐 ពេលវេលា: {datetime.fromtimestamp(entry['ts']).strftime('%H:%M:%S')}"
+                )
+                _ca_api(base_url, 'sendMessage', chat_id=uid,
+                        text=notify_txt, parse_mode='HTML')
+                with _chatbot_cache_lock:
+                    _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
+            time.sleep(0.15)  # Respect rate limits
+
+def _chatbot_handle_update(base_url, update):
+    if 'message' not in update:
+        return
+    msg     = update['message']
+    chat    = msg.get('chat', {})
+    chat_id = chat.get('id')
+    text    = (msg.get('text') or '').strip()
+    user    = msg.get('from') or {}
+    user_id = user.get('id')
+    chat_type = chat.get('type', '')
+
+    if not chat_id or not user_id:
+        return
+
+    # Cache all group/supergroup messages for deletion detection
+    if chat_type in ('group', 'supergroup'):
+        _ca_cache_message(chat_id, msg)
+
+    # Private chat commands
+    if chat_type == 'private':
+        if text.startswith('/start'):
+            _ca_api(base_url, 'sendMessage', chat_id=chat_id,
+                parse_mode='HTML',
+                text=(
+                    "🤖 <b>Chat Automation Bot</b>\n\n"
+                    "ខ្ញុំជូនដំណឹងអ្នកពេល message ត្រូវបានលុបនៅក្នុង group ណាមួយ\n\n"
+                    "<b>របៀបប្រើ:</b>\n"
+                    "1️⃣ បន្ថែម Bot ទៅ group របស់អ្នក\n"
+                    "2️⃣ ផ្ញើ /monitor នៅក្នុង group\n"
+                    "3️⃣ Bot នឹងជូនដំណឹងពេល message ណាមួយត្រូវបានលុប"
+                ))
+        return
+
+    # Group commands
+    if text.startswith('/monitor'):
+        with _chatbot_cache_lock:
+            _chatbot_monitored_users.setdefault(chat_id, set()).add(user_id)
+        fname = html.escape(user.get('first_name', 'អ្នកប្រើ'))
+        _ca_api(base_url, 'sendMessage', chat_id=chat_id, parse_mode='HTML',
+                text=f"✅ <b>{fname}</b> ឥឡូវ Bot នឹងជូនដំណឹងអ្នកពេល message ត្រូវបានលុបក្នុង group នេះ")
+
+def _chatbot_polling_loop(token):
+    global CHATBOT_ACTIVE
+    base_url = f"https://api.telegram.org/bot{token}/"
+    offset   = None
+    last_scan = 0
+    logger.info(f"Chat Automation Bot [{token[:10]}...] started")
+    try:
+        http.post(f"{base_url}deleteWebhook",
+                  json={'drop_pending_updates': False}, timeout=10)
+    except Exception as e:
+        logger.warning(f"Chat Automation deleteWebhook failed: {e}")
+    while CHATBOT_ACTIVE:
+        try:
+            params = {
+                'timeout': 25,
+                'allowed_updates': ['message', 'edited_message'],
+            }
+            if offset is not None:
+                params['offset'] = offset
+            resp = http.get(f"{base_url}getUpdates", params=params, timeout=35)
+            data = resp.json()
+            if data.get('ok'):
+                for upd in data.get('result', []):
+                    offset = upd['update_id'] + 1
+                    worker_pool.submit(_chatbot_handle_update, base_url, upd)
+            else:
+                logger.warning(f"Chat Automation getUpdates: {data.get('description')}")
+                time.sleep(3)
+            # Run deleted-message scan every 5 minutes
+            if time.time() - last_scan >= 300:
+                background_pool.submit(_ca_check_deleted, base_url)
+                last_scan = time.time()
+        except Exception as e:
+            if CHATBOT_ACTIVE:
+                logger.error(f"Chat Automation polling error: {e}")
+                time.sleep(3)
+    logger.info("Chat Automation polling stopped")
+
+def _start_chatbot(token):
+    global _chatbot_thread, CHATBOT_ACTIVE
+    _stop_chatbot()
+    CHATBOT_ACTIVE = True
+    _chatbot_thread = threading.Thread(
+        target=_chatbot_polling_loop, args=(token,),
+        daemon=True, name="chatbot"
+    )
+    _chatbot_thread.start()
+    logger.info("Chat Automation Bot thread started")
+
+def _stop_chatbot():
+    global CHATBOT_ACTIVE, _chatbot_thread
+    CHATBOT_ACTIVE = False
+    _chatbot_thread = None
+
 # ── Multi-bot clone management ────────────────────────────────────────────────
 def _clone_bot_loop_v2(token, stop_event):
     base_url = f"https://api.telegram.org/bot{token}/"
@@ -3581,6 +3843,33 @@ def _show_translate_bot_menu(chat_id, user_id=None):
     )
     _settings_edit(chat_id, uid, msg, _build_settings_tr_ikb())
 
+def _show_chatbot_menu(chat_id, user_id=None):
+    uid        = user_id or chat_id
+    token_ok   = bool(CHATBOT_TOKEN)
+    is_running = CHATBOT_ACTIVE and _chatbot_thread and _chatbot_thread.is_alive()
+    token_disp = f"<code>{CHATBOT_TOKEN[:12]}...</code>" if token_ok else "❌ មិនទាន់កំណត់"
+    status     = "🟢 ដំណើរការ" if is_running else "🔴 បញ្ឈប់"
+    bot_info_line = ""
+    if token_ok:
+        b_name, b_username = _get_bot_info(CHATBOT_TOKEN)
+        if b_name or b_username:
+            name_part = f"<b>{html.escape(b_name)}</b>" if b_name else ""
+            user_part = f"@{b_username}" if b_username else ""
+            bot_info_line = f"🤖 Bot: {name_part} {user_part}\n"
+    with _chatbot_cache_lock:
+        monitored_count = len(_chatbot_msg_cache)
+        cached_msgs     = sum(len(v) for v in _chatbot_msg_cache.values())
+    msg = (
+        f"🤖 <b>Chat Automation</b>\n\n"
+        f"{bot_info_line}"
+        f"🔑 Token: {token_disp}\n"
+        f"📡 ស្ថានភាព: {status}\n"
+        f"💬 Groups ត្រូវតាមដាន: {monitored_count}\n"
+        f"📝 Messages cached: {cached_msgs}\n\n"
+        f"<i>Bot ត្រួតពិនិត្យ messages ក្នុង group ហើយជូនដំណឹងពេល message ត្រូវបានលុប</i>"
+    )
+    _settings_edit(chat_id, uid, msg, _build_settings_chatbot_ikb())
+
 def _show_clone_main_menu(chat_id):
     """Redirect to TTS bot menu (legacy)."""
     _show_clone_bot_menu(chat_id)
@@ -3601,6 +3890,8 @@ def _dispatch_settings_panel(chat_id, user_id, key):
         _show_clone_bot_menu(chat_id, user_id)
     elif key == 'tr':
         _show_translate_bot_menu(chat_id, user_id)
+    elif key == 'ca':
+        _show_chatbot_menu(chat_id, user_id)
     else:
         _settings_edit(chat_id, user_id, _settings_main_text(), SETTINGS_MAIN_IKB)
 # ── Main message handler ──────────────────────────────────────────────────────
@@ -4136,6 +4427,10 @@ def main():
     if TRANSLATE_BOT_ACTIVE and TRANSLATE_BOT_TOKEN:
         _start_translate_bot(TRANSLATE_BOT_TOKEN)
         logger.info("Translate Bot resumed from saved state")
+
+    if CHATBOT_ACTIVE and CHATBOT_TOKEN:
+        _start_chatbot(CHATBOT_TOKEN)
+        logger.info("Chat Automation Bot resumed from saved state")
 
     try:
         _polling_loop()
