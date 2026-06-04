@@ -3438,19 +3438,77 @@ def _ca_api(base_url, method, **kwargs):
         logger.error(f"CA API {method} error: {e}")
     return None
 
+def _ca_describe_msg(msg):
+    """Return (emoji, preview) describing any Telegram message type."""
+    caption = (msg.get('caption') or '').strip()
+    cap_part = f"\n📝 {caption[:120]}" if caption else ''
+
+    if msg.get('text'):
+        return '💬', msg['text'][:200]
+    if msg.get('photo'):
+        return '🖼', f'Photo{cap_part}'
+    if msg.get('video'):
+        v = msg['video']
+        dur = f" ({v.get('duration', 0)}s)" if v.get('duration') else ''
+        return '🎥', f'Video{dur}{cap_part}'
+    if msg.get('voice'):
+        dur = msg['voice'].get('duration', 0)
+        return '🎤', f'Voice message ({dur}s)'
+    if msg.get('audio'):
+        a = msg['audio']
+        title = a.get('title') or a.get('file_name') or 'Audio'
+        return '🎵', title
+    if msg.get('video_note'):
+        dur = msg['video_note'].get('duration', 0)
+        return '📹', f'Video note ({dur}s)'
+    if msg.get('sticker'):
+        s = msg['sticker']
+        em = s.get('emoji') or ''
+        name = s.get('set_name') or 'Sticker'
+        return '🎭', f'{em} {name}'.strip()
+    if msg.get('animation'):
+        return '🎞', f'GIF/Animation{cap_part}'
+    if msg.get('document'):
+        fname = msg['document'].get('file_name') or 'Document'
+        return '📄', f'{fname}{cap_part}'
+    if msg.get('location'):
+        loc = msg['location']
+        return '📍', f"Location ({loc.get('latitude')}, {loc.get('longitude')})"
+    if msg.get('venue'):
+        v = msg['venue']
+        return '🏢', f"{v.get('title','')} — {v.get('address','')}"
+    if msg.get('contact'):
+        c = msg['contact']
+        return '👤', f"{c.get('first_name','')} {c.get('phone_number','')}"
+    if msg.get('poll'):
+        return '📊', f"Poll: {msg['poll'].get('question','')[:100]}"
+    if msg.get('dice'):
+        d = msg['dice']
+        return '🎲', f"{d.get('emoji','')} {d.get('value','')}"
+    if msg.get('game'):
+        return '🎮', msg['game'].get('title', 'Game')
+    if msg.get('invoice'):
+        return '🧾', msg['invoice'].get('title', 'Invoice')
+    if msg.get('story'):
+        return '📖', 'Story'
+    if msg.get('forward_from') or msg.get('forward_from_chat'):
+        return '↩️', 'Forwarded message'
+    return '📨', 'Message'
+
 def _ca_cache_message(chat_id, msg):
     """Store a message in the deletion-detection cache."""
-    msg_id    = msg.get('message_id')
-    user      = msg.get('from') or {}
-    user_id   = user.get('id')
-    text      = msg.get('text') or msg.get('caption') or ''
+    msg_id  = msg.get('message_id')
+    user    = msg.get('from') or {}
+    user_id = user.get('id')
     if not msg_id or not user_id:
         return
+    emoji, preview = _ca_describe_msg(msg)
     entry = {
         'user_id':    user_id,
         'first_name': user.get('first_name', ''),
         'username':   user.get('username', ''),
-        'text':       text[:200],
+        'emoji':      emoji,
+        'text':       preview,
         'ts':         time.time(),
     }
     with _chatbot_cache_lock:
@@ -3500,9 +3558,10 @@ def _ca_check_deleted(base_url):
                 if resp is False:
                     fname      = entry.get('first_name') or 'Unknown'
                     uname      = entry.get('username', '')
-                    preview    = entry['text'][:200] if entry['text'] else '(media/file)'
+                    emoji      = entry.get('emoji', '📨')
+                    preview    = entry.get('text', '') or '(unknown)'
                     who_line   = f"{fname} @{uname}" if uname else fname
-                    notify_txt = f"{who_line} deleted a message:\n\n{preview}"
+                    notify_txt = f"{who_line} deleted a message:\n\n{emoji} {preview}"
                     _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
                     with _chatbot_cache_lock:
                         _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
@@ -3541,15 +3600,45 @@ def _chatbot_handle_update(base_url, update):
             for mid in msg_ids:
                 entry = cached.get(mid)
                 if entry:
-                    fname    = entry.get('first_name') or 'Unknown'
-                    uname    = entry.get('username', '')
-                    preview  = entry['text'][:200] if entry['text'] else '(media/file)'
-                    who_line = f"{fname} @{uname}" if uname else fname
-                    notify_txt = f"{who_line} deleted a message:\n\n{preview}"
-                    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID,
-                            text=notify_txt)
+                    fname      = entry.get('first_name') or 'Unknown'
+                    uname      = entry.get('username', '')
+                    emoji      = entry.get('emoji', '📨')
+                    preview    = entry.get('text', '') or '(unknown)'
+                    who_line   = f"{fname} @{uname}" if uname else fname
+                    notify_txt = f"{who_line} deleted a message:\n\n{emoji} {preview}"
+                    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
                     with _chatbot_cache_lock:
                         _chatbot_msg_cache.get(chat_id, {}).pop(mid, None)
+        return
+
+    # Handle edited messages (regular + business)
+    if 'edited_business_message' in update or 'edited_message' in update:
+        msg       = update.get('edited_business_message') or update.get('edited_message')
+        is_biz    = 'edited_business_message' in update
+        chat      = msg.get('chat', {})
+        chat_id   = chat.get('id')
+        chat_type = chat.get('type', '')
+        user      = msg.get('from') or {}
+        user_id   = user.get('id')
+        msg_id    = msg.get('message_id')
+        if chat_id and user_id and (chat_type == 'private' or is_biz):
+            fname    = user.get('first_name') or 'Unknown'
+            uname    = user.get('username', '')
+            who_line = f"{fname} @{uname}" if uname else fname
+            # Retrieve old content from cache (before edit)
+            with _chatbot_cache_lock:
+                old_entry = _chatbot_msg_cache.get(chat_id, {}).get(msg_id)
+            old_emoji   = old_entry.get('emoji', '📨') if old_entry else '📨'
+            old_preview = old_entry.get('text', '(unknown)') if old_entry else '(unknown)'
+            new_emoji, new_preview = _ca_describe_msg(msg)
+            notify_txt = (
+                f"✏️ {who_line} edited a message:\n\n"
+                f"⬅️ Before: {old_emoji} {old_preview}\n\n"
+                f"➡️ After:  {new_emoji} {new_preview}"
+            )
+            _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
+            # Update cache with new content
+            _ca_cache_message(chat_id, msg)
         return
 
     # Support both regular and Telegram Business messages
