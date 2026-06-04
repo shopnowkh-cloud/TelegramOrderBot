@@ -3511,6 +3511,25 @@ def _ca_check_deleted(base_url):
         _chatbot_scan_lock.release()
 
 def _chatbot_handle_update(base_url, update):
+    # Handle Telegram Business connection/disconnection events
+    if 'business_connection' in update:
+        bc         = update['business_connection']
+        user       = bc.get('user', {})
+        fname      = user.get('first_name', '')
+        uname      = user.get('username', '')
+        is_enabled = bc.get('is_enabled', False)
+        who        = f"{fname} @{uname}" if uname else fname
+        if is_enabled:
+            txt = f"✅ Bot connected\n\n👤 {who}"
+        else:
+            txt = (
+                f"⛔️ Bot disabled\n\n"
+                f"👤 {who}\n\n"
+                f"To enable it again, add the bot to Chat Bots."
+            )
+        _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=txt)
+        return
+
     # Handle Telegram Business deleted messages directly
     if 'deleted_business_messages' in update:
         deleted = update['deleted_business_messages']
