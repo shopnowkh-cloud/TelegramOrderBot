@@ -3294,12 +3294,20 @@ def _clone_bot_polling_loop(token):
     base_url = f"https://api.telegram.org/bot{token}/"
     offset   = None
     logger.info("Clone Bot polling started")
-    # Delete any active webhook before polling
-    try:
-        http.post(f"{base_url}deleteWebhook", json={'drop_pending_updates': False}, timeout=10)
-        logger.info("Clone Bot: webhook deleted, starting poll")
-    except Exception as e:
-        logger.warning(f"Clone Bot deleteWebhook failed: {e}")
+    def _steal():
+        try:
+            http.post(f"{base_url}deleteWebhook", json={'drop_pending_updates': False}, timeout=10)
+        except Exception:
+            pass
+        try:
+            http.get(f"{base_url}getUpdates",
+                     params={'timeout': 0, 'offset': -1, 'allowed_updates': ['message', 'callback_query']},
+                     timeout=10)
+        except Exception:
+            pass
+    _steal()
+    logger.info("Clone Bot: webhook deleted, starting poll")
+    _conflict_count = 0
     while CLONE_BOT_ACTIVE:
         try:
             params = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
@@ -3308,12 +3316,22 @@ def _clone_bot_polling_loop(token):
             resp = http.get(f"{base_url}getUpdates", params=params, timeout=40)
             data = resp.json()
             if data.get('ok'):
+                _conflict_count = 0
                 for upd in data.get('result', []):
                     offset = upd['update_id'] + 1
                     worker_pool.submit(_clone_handle_update, base_url, upd)
             else:
-                logger.warning(f"Clone Bot getUpdates: {data.get('description')}")
-                time.sleep(3)
+                desc = data.get('description', '')
+                logger.warning(f"Clone Bot getUpdates: {desc}")
+                if 'Conflict' in desc:
+                    _conflict_count += 1
+                    wait = min(3 * _conflict_count, 15)
+                    logger.info(f"Clone Bot: re-stealing polling (attempt {_conflict_count})")
+                    time.sleep(wait)
+                    _steal()
+                    time.sleep(2)
+                else:
+                    time.sleep(3)
         except Exception as e:
             if CLONE_BOT_ACTIVE:
                 logger.error(f"Clone Bot polling error: {e}")
@@ -3420,11 +3438,20 @@ def _translate_bot_polling_loop(token):
     base_url = f"https://api.telegram.org/bot{token}/"
     offset   = None
     logger.info(f"Translate Bot [{token[:10]}...] started")
-    try:
-        http.post(f"{base_url}deleteWebhook", json={'drop_pending_updates': False}, timeout=10)
-        logger.info("Translate Bot: webhook deleted, starting poll")
-    except Exception as e:
-        logger.warning(f"Translate Bot deleteWebhook failed: {e}")
+    def _steal():
+        try:
+            http.post(f"{base_url}deleteWebhook", json={'drop_pending_updates': False}, timeout=10)
+        except Exception:
+            pass
+        try:
+            http.get(f"{base_url}getUpdates",
+                     params={'timeout': 0, 'offset': -1, 'allowed_updates': ['message', 'callback_query']},
+                     timeout=10)
+        except Exception:
+            pass
+    _steal()
+    logger.info("Translate Bot: webhook deleted, starting poll")
+    _conflict_count = 0
     while TRANSLATE_BOT_ACTIVE:
         try:
             params = {'timeout': 30, 'allowed_updates': ['message', 'callback_query']}
@@ -3433,12 +3460,22 @@ def _translate_bot_polling_loop(token):
             resp = http.get(f"{base_url}getUpdates", params=params, timeout=40)
             data = resp.json()
             if data.get('ok'):
+                _conflict_count = 0
                 for upd in data.get('result', []):
                     offset = upd['update_id'] + 1
                     worker_pool.submit(_translate_handle_update, base_url, upd)
             else:
-                logger.warning(f"Translate Bot getUpdates: {data.get('description')}")
-                time.sleep(3)
+                desc = data.get('description', '')
+                logger.warning(f"Translate Bot getUpdates: {desc}")
+                if 'Conflict' in desc:
+                    _conflict_count += 1
+                    wait = min(3 * _conflict_count, 15)
+                    logger.info(f"Translate Bot: re-stealing polling (attempt {_conflict_count})")
+                    time.sleep(wait)
+                    _steal()
+                    time.sleep(2)
+                else:
+                    time.sleep(3)
         except Exception as e:
             if TRANSLATE_BOT_ACTIVE:
                 logger.error(f"Translate Bot polling error: {e}")
@@ -3889,33 +3926,50 @@ def _chatbot_scan_loop(base_url):
 
 def _chatbot_polling_loop(token):
     global CHATBOT_ACTIVE
-    base_url = f"https://api.telegram.org/bot{token}/"
-    offset   = None
+    base_url        = f"https://api.telegram.org/bot{token}/"
+    offset          = None
+    _ca_allowed     = ['message', 'edited_message', 'business_connection',
+                       'business_message', 'edited_business_message',
+                       'deleted_business_messages']
     logger.info(f"Chat Automation Bot [{token[:10]}...] started")
-    try:
-        http.post(f"{base_url}deleteWebhook",
-                  json={'drop_pending_updates': False}, timeout=10)
-    except Exception as e:
-        logger.warning(f"Chat Automation deleteWebhook failed: {e}")
+    def _steal():
+        try:
+            http.post(f"{base_url}deleteWebhook", json={'drop_pending_updates': False}, timeout=10)
+        except Exception:
+            pass
+        try:
+            http.get(f"{base_url}getUpdates",
+                     params={'timeout': 0, 'offset': -1, 'allowed_updates': _ca_allowed},
+                     timeout=10)
+        except Exception:
+            pass
+    _steal()
+    logger.info("Chat Automation Bot: webhook deleted, starting poll")
+    _conflict_count = 0
     while CHATBOT_ACTIVE:
         try:
-            params = {
-                'timeout': 25,
-                'allowed_updates': ['message', 'edited_message', 'business_connection',
-                                    'business_message', 'edited_business_message',
-                                    'deleted_business_messages'],
-            }
+            params = {'timeout': 25, 'allowed_updates': _ca_allowed}
             if offset is not None:
                 params['offset'] = offset
             resp = http.get(f"{base_url}getUpdates", params=params, timeout=35)
             data = resp.json()
             if data.get('ok'):
+                _conflict_count = 0
                 for upd in data.get('result', []):
                     offset = upd['update_id'] + 1
                     worker_pool.submit(_chatbot_handle_update, base_url, upd)
             else:
-                logger.warning(f"Chat Automation getUpdates: {data.get('description')}")
-                time.sleep(3)
+                desc = data.get('description', '')
+                logger.warning(f"Chat Automation getUpdates: {desc}")
+                if 'Conflict' in desc:
+                    _conflict_count += 1
+                    wait = min(3 * _conflict_count, 15)
+                    logger.info(f"Chat Automation: re-stealing polling (attempt {_conflict_count})")
+                    time.sleep(wait)
+                    _steal()
+                    time.sleep(2)
+                else:
+                    time.sleep(3)
         except Exception as e:
             if CHATBOT_ACTIVE:
                 logger.error(f"Chat Automation polling error: {e}")
