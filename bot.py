@@ -87,6 +87,8 @@ _chatbot_cache_lock = threading.Lock()
 _chatbot_scan_lock  = threading.Lock()   # prevents concurrent deletion scans
 _ca_notified_deletions: set = set()      # {(chat_id, msg_id)} — prevent double notifications
 _ca_notified_lock = threading.Lock()
+_ca_edit_notify_msgs: dict = {}          # {(chat_id, msg_id): admin_notify_msg_id} — edit in-place
+_ca_edit_notify_lock = threading.Lock()
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 _TG_EMOJI_RE = re.compile(r'<tg-emoji emoji-id="(\d+)">(.*?)</tg-emoji>', re.DOTALL)
@@ -3685,20 +3687,51 @@ def _chatbot_handle_update(base_url, update):
             fname    = user.get('first_name') or 'Unknown'
             uname    = user.get('username', '')
             who_line = f"{fname} @{uname}" if uname else fname
-            # Retrieve old content from cache (before edit)
+            # Retrieve original content from cache (before any edits)
             with _chatbot_cache_lock:
                 old_entry = _chatbot_msg_cache.get(chat_id, {}).get(msg_id)
             old_emoji   = old_entry.get('emoji', '📨') if old_entry else '📨'
             old_preview = old_entry.get('text', '(unknown)') if old_entry else '(unknown)'
+            # Preserve original "before" so repeated live-location edits keep showing the real original
+            if old_entry and old_entry.get('original_emoji'):
+                old_emoji   = old_entry['original_emoji']
+                old_preview = old_entry['original_text']
             new_emoji, new_preview = _ca_describe_msg(msg)
+            now_str  = datetime.now(timezone.utc).strftime('%H:%M:%S')
             notify_txt = (
                 f"✏️ {who_line} edited a message:\n\n"
                 f"⬅️ Before: {old_emoji} {old_preview}\n\n"
-                f"➡️ After:  {new_emoji} {new_preview}"
+                f"➡️ After:  {new_emoji} {new_preview}\n\n"
+                f"🕐 {now_str} UTC"
             )
-            _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
-            # Update cache with new content
+            # Edit the existing notification in-place (live-location sends many edits)
+            key = (chat_id, msg_id)
+            with _ca_edit_notify_lock:
+                existing_notify_id = _ca_edit_notify_msgs.get(key)
+            edited = False
+            if existing_notify_id:
+                r = _ca_api(base_url, 'editMessageText',
+                            chat_id=ADMIN_ID, message_id=existing_notify_id, text=notify_txt)
+                edited = r is not None
+            if not edited:
+                r = _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
+                if r and isinstance(r, dict):
+                    with _ca_edit_notify_lock:
+                        _ca_edit_notify_msgs[key] = r.get('message_id')
+                        # Trim dict so it doesn't grow forever
+                        if len(_ca_edit_notify_msgs) > 500:
+                            oldest = list(_ca_edit_notify_msgs.keys())[:100]
+                            for k in oldest:
+                                _ca_edit_notify_msgs.pop(k, None)
+            # Update cache but preserve the original "before" content
+            orig_emoji   = (old_entry.get('original_emoji') or old_emoji) if old_entry else old_emoji
+            orig_preview = (old_entry.get('original_text')  or old_preview) if old_entry else old_preview
             _ca_cache_message(chat_id, msg)
+            with _chatbot_cache_lock:
+                entry = _chatbot_msg_cache.get(chat_id, {}).get(msg_id)
+                if entry:
+                    entry['original_emoji'] = orig_emoji
+                    entry['original_text']  = orig_preview
         return
 
     # Support both regular and Telegram Business messages
