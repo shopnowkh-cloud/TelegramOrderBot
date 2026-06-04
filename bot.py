@@ -1329,8 +1329,8 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
      {'text': '📢 Channel ID',      'callback_data': 's:ch'}],
     [{'text': '👑 Admin',           'callback_data': 's:adm'},
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
-    [{'text': '🎙 TTS Bot',         'callback_data': 's:tts',  'style': 'primary'}],
-    [{'text': '🌐 Translate Bot',   'callback_data': 's:tr',   'style': 'primary'}],
+    [{'text': 'បង្កើតសំឡេង Ai',     'callback_data': 's:tts',  'style': 'primary'}],
+    [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr',   'style': 'primary'}],
 ]}
 SETTINGS_PAY_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរឈ្មោះ Payment', 'callback_data': 's:pay_edit'}],
