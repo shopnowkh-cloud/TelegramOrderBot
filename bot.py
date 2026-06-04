@@ -3593,8 +3593,8 @@ def _ca_check_deleted(base_url):
             for msg_id, entry in list(msgs.items()):
                 if not CHATBOT_ACTIVE:
                     return
-                # Skip messages younger than 30 s — Telegram may not index them yet
-                if now - entry['ts'] < 30:
+                # Skip messages younger than 2 s — minimal buffer for Telegram to index
+                if now - entry['ts'] < 2:
                     continue
                 # Skip if already notified (business event beat us to it)
                 with _ca_notified_lock:
@@ -3767,7 +3767,7 @@ def _chatbot_handle_update(base_url, update):
         _ca_cache_message(chat_id, msg)
 
 def _chatbot_scan_loop(base_url):
-    """Dedicated thread: scans for deleted messages every 10 s, independently of polling."""
+    """Dedicated thread: scans for deleted messages every 1 s, independently of polling."""
     logger.info("Chat Automation scan thread started")
     while CHATBOT_ACTIVE:
         try:
@@ -3775,7 +3775,7 @@ def _chatbot_scan_loop(base_url):
         except Exception as e:
             logger.error(f"Chat Automation scan error: {e}")
         # Sleep in small steps so the thread exits quickly when CHATBOT_ACTIVE → False
-        for _ in range(100):
+        for _ in range(10):
             if not CHATBOT_ACTIVE:
                 break
             time.sleep(0.1)
