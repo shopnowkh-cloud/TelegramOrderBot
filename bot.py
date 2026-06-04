@@ -85,6 +85,8 @@ _chatbot_scan_thread = None
 _chatbot_msg_cache: dict = {}   # {chat_id: {msg_id: {user_id, first_name, text, ts}}}
 _chatbot_cache_lock = threading.Lock()
 _chatbot_scan_lock  = threading.Lock()   # prevents concurrent deletion scans
+_ca_notified_deletions: set = set()      # {(chat_id, msg_id)} — prevent double notifications
+_ca_notified_lock = threading.Lock()
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
 def _tg_api(method, _files=None, **kwargs):
@@ -3441,10 +3443,10 @@ def _ca_api(base_url, method, **kwargs):
 def _ca_describe_msg(msg):
     """Return (emoji, preview) describing any Telegram message type."""
     caption = (msg.get('caption') or '').strip()
-    cap_part = f"\n📝 {caption[:120]}" if caption else ''
+    cap_part = f"\n📝 {caption}" if caption else ''
 
     if msg.get('text'):
-        return '💬', msg['text'][:200]
+        return '💬', msg['text']
     if msg.get('photo'):
         return '🖼', f'Photo{cap_part}'
     if msg.get('video'):
@@ -3520,6 +3522,28 @@ def _ca_cache_message(chat_id, msg):
             if e['ts'] >= cutoff
         }
 
+def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
+    """Send a deletion notification to admin — deduplicated so only one fires per message."""
+    key = (chat_id, msg_id)
+    with _ca_notified_lock:
+        if key in _ca_notified_deletions:
+            return
+        _ca_notified_deletions.add(key)
+        # Trim set so it doesn't grow forever (keep last 2000 entries)
+        if len(_ca_notified_deletions) > 2000:
+            oldest = list(_ca_notified_deletions)[:500]
+            for k in oldest:
+                _ca_notified_deletions.discard(k)
+    fname    = entry.get('first_name') or 'Unknown'
+    uname    = entry.get('username', '')
+    emoji    = entry.get('emoji', '📨')
+    preview  = entry.get('text', '') or '(unknown)'
+    who_line = f"{fname} @{uname}" if uname else fname
+    notify_txt = f"🗑 {who_line} លុបសារ:\n\n{emoji} {preview}"
+    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
+    with _chatbot_cache_lock:
+        _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
+
 def _ca_check_deleted(base_url):
     """Background scan: try to copy each cached message; notify admin if deleted."""
     # Skip if a previous scan is still running
@@ -3536,6 +3560,12 @@ def _ca_check_deleted(base_url):
                 # Skip messages younger than 30 s — Telegram may not index them yet
                 if now - entry['ts'] < 30:
                     continue
+                # Skip if already notified (business event beat us to it)
+                with _ca_notified_lock:
+                    if (chat_id, msg_id) in _ca_notified_deletions:
+                        with _chatbot_cache_lock:
+                            _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
+                        continue
                 resp = None
                 try:
                     r = http.post(f"{base_url}copyMessage", json={
@@ -3556,15 +3586,7 @@ def _ca_check_deleted(base_url):
                 except Exception:
                     pass
                 if resp is False:
-                    fname      = entry.get('first_name') or 'Unknown'
-                    uname      = entry.get('username', '')
-                    emoji      = entry.get('emoji', '📨')
-                    preview    = entry.get('text', '') or '(unknown)'
-                    who_line   = f"{fname} @{uname}" if uname else fname
-                    notify_txt = f"{who_line} deleted a message:\n\n{emoji} {preview}"
-                    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
-                    with _chatbot_cache_lock:
-                        _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
+                    _ca_send_delete_notify(base_url, chat_id, msg_id, entry)
                 time.sleep(0.1)  # rate-limit between checks
     finally:
         _chatbot_scan_lock.release()
@@ -3596,19 +3618,11 @@ def _chatbot_handle_update(base_url, update):
         msg_ids = deleted.get('message_ids', [])
         if chat_id and msg_ids:
             with _chatbot_cache_lock:
-                cached = _chatbot_msg_cache.get(chat_id, {})
+                cached = dict(_chatbot_msg_cache.get(chat_id, {}))
             for mid in msg_ids:
                 entry = cached.get(mid)
                 if entry:
-                    fname      = entry.get('first_name') or 'Unknown'
-                    uname      = entry.get('username', '')
-                    emoji      = entry.get('emoji', '📨')
-                    preview    = entry.get('text', '') or '(unknown)'
-                    who_line   = f"{fname} @{uname}" if uname else fname
-                    notify_txt = f"{who_line} deleted a message:\n\n{emoji} {preview}"
-                    _ca_api(base_url, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
-                    with _chatbot_cache_lock:
-                        _chatbot_msg_cache.get(chat_id, {}).pop(mid, None)
+                    _ca_send_delete_notify(base_url, chat_id, mid, entry)
         return
 
     # Handle edited messages (regular + business)
