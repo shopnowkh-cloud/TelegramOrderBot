@@ -91,30 +91,8 @@ _ca_edit_notify_msgs: dict = {}          # {(chat_id, msg_id): admin_notify_msg_
 _ca_edit_notify_lock = threading.Lock()
 
 # ── Telegram Bot API helper ───────────────────────────────────────────────────
-_TG_EMOJI_RE = re.compile(r'<tg-emoji emoji-id="(\d+)">(.*?)</tg-emoji>', re.DOTALL)
-
-def _utf16_len(s):
-    return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
-
-def _expand_tg_emoji(text):
-    """Parse <tg-emoji emoji-id="ID">FALLBACK</tg-emoji> → (clean_text, entities)."""
-    entities, clean, offset, last = [], '', 0, 0
-    for m in _TG_EMOJI_RE.finditer(text):
-        prefix = text[last:m.start()]
-        clean += prefix
-        offset += _utf16_len(prefix)
-        fallback = m.group(2)
-        length = _utf16_len(fallback)
-        entities.append({'type': 'custom_emoji', 'offset': offset,
-                         'length': length, 'custom_emoji_id': m.group(1)})
-        clean += fallback
-        offset += length
-        last = m.end()
-    clean += text[last:]
-    return clean, entities
-
 def _process_inline_keyboard(markup):
-    """Expand <tg-emoji> tags in inline button text → text + text_entities (Bot API 9.4)."""
+    """Add text_parse_mode=HTML to buttons containing <tg-emoji> tags (Bot API 9.4)."""
     if not isinstance(markup, dict) or 'inline_keyboard' not in markup:
         return markup
     new_rows = []
@@ -122,11 +100,8 @@ def _process_inline_keyboard(markup):
         new_row = []
         for btn in row:
             if isinstance(btn, dict) and '<tg-emoji' in (btn.get('text') or ''):
-                clean, ents = _expand_tg_emoji(btn['text'])
                 new_btn = dict(btn)
-                new_btn['text'] = clean
-                if ents:
-                    new_btn['text_entities'] = ents
+                new_btn['text_parse_mode'] = 'HTML'
                 new_row.append(new_btn)
             else:
                 new_row.append(btn)
