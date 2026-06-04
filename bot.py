@@ -3504,22 +3504,55 @@ def _ca_check_deleted(base_url):
             time.sleep(0.15)  # Respect rate limits
 
 def _chatbot_handle_update(base_url, update):
-    if 'message' not in update:
+    # Handle Telegram Business deleted messages directly
+    if 'deleted_business_messages' in update:
+        deleted = update['deleted_business_messages']
+        chat_id = deleted.get('chat', {}).get('id')
+        msg_ids = deleted.get('message_ids', [])
+        if chat_id and msg_ids:
+            with _chatbot_cache_lock:
+                cached = _chatbot_msg_cache.get(chat_id, {})
+            for mid in msg_ids:
+                entry = cached.get(mid)
+                if entry:
+                    uid    = entry['user_id']
+                    fname  = html.escape(entry['first_name'] or 'អ្នកប្រើ')
+                    preview = html.escape(entry['text'][:80]) if entry['text'] else '<i>(media)</i>'
+                    notify_txt = (
+                        f"🗑 <b>Message ត្រូវបានលុប</b>\n\n"
+                        f"👤 អ្នកផ្ញើ: {fname}\n"
+                        f"💬 មាតិកា: {preview}\n"
+                        f"🕐 ពេលវេលា: {datetime.fromtimestamp(entry['ts']).strftime('%H:%M:%S')}"
+                    )
+                    _ca_api(base_url, 'sendMessage', chat_id=uid,
+                            text=notify_txt, parse_mode='HTML')
+                    with _chatbot_cache_lock:
+                        _chatbot_msg_cache.get(chat_id, {}).pop(mid, None)
         return
-    msg     = update['message']
-    chat    = msg.get('chat', {})
-    chat_id = chat.get('id')
-    text    = (msg.get('text') or '').strip()
-    user    = msg.get('from') or {}
-    user_id = user.get('id')
+
+    # Support both regular and Telegram Business messages
+    if 'business_message' in update:
+        msg = update['business_message']
+        is_business = True
+    elif 'message' in update:
+        msg = update['message']
+        is_business = False
+    else:
+        return
+
+    chat      = msg.get('chat', {})
+    chat_id   = chat.get('id')
+    text      = (msg.get('text') or '').strip()
+    user      = msg.get('from') or {}
+    user_id   = user.get('id')
     chat_type = chat.get('type', '')
 
     if not chat_id or not user_id:
         return
 
-    # Cache all private/personal chat messages for deletion detection
-    if chat_type == 'private':
-        if text.startswith('/start'):
+    # Cache private messages (both regular and Business) for deletion detection
+    if chat_type == 'private' or is_business:
+        if text.startswith('/start') and not is_business:
             _ca_api(base_url, 'sendMessage', chat_id=chat_id,
                 parse_mode='HTML',
                 text=(
@@ -3529,7 +3562,7 @@ def _chatbot_handle_update(base_url, update):
                     "ផ្ញើ message ណាមួយមកខ្ញុំ — Bot នឹងតាមដានដោយស្វ័យប្រវត្តិ ហើយជូនដំណឹងពេល message ត្រូវបានលុប"
                 ))
             return
-        # Cache every private message for deletion tracking
+        # Cache every message for deletion tracking
         _ca_cache_message(chat_id, msg)
 
 def _chatbot_polling_loop(token):
@@ -3547,7 +3580,7 @@ def _chatbot_polling_loop(token):
         try:
             params = {
                 'timeout': 25,
-                'allowed_updates': ['message', 'edited_message'],
+                'allowed_updates': ['message', 'edited_message', 'business_connection', 'business_message', 'edited_business_message', 'deleted_business_messages'],
             }
             if offset is not None:
                 params['offset'] = offset
