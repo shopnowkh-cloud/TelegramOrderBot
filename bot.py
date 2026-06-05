@@ -1380,7 +1380,6 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
      {'text': '📢 Channel ID',      'callback_data': 's:ch'}],
     [{'text': '👑 Admin',           'callback_data': 's:adm'},
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
-    [{'text': 'បង្កើតសំឡេង Ai',     'callback_data': 's:tts',  'style': 'primary'}],
     [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr',   'style': 'primary'}],
     [{'text': 'Chat Automation',    'callback_data': 's:ca',   'style': 'primary'}],
 ]}
@@ -1430,8 +1429,7 @@ def _build_settings_tr_ikb():
           'callback_data': 's:tr_stop' if running else 's:tr_start'}],
         [{'text': BTN_TR_SET_TOKEN,  'callback_data': 's:tr_token'},
          {'text': BTN_TR_TOKEN_CLEAR,'callback_data': 's:tr_clear'}],
-        [{'text': '🎙 TTS Bot',       'callback_data': 's:tts'},
-         {'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',       'callback_data': 's:main'}],
+        [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',       'callback_data': 's:main'}],
     ]}
 
 def _build_settings_chatbot_ikb():
@@ -2586,34 +2584,8 @@ def handle_callback_query(update):
                 set_setting('MAINTENANCE_MODE', 'false')
                 _show_maintenance_inline(chat_id, user_id)
                 return
-            if action == 'tts':
-                _show_clone_bot_menu(chat_id, user_id)
-                return
-            if action == 'tts_start':
-                if not CLONE_BOT_TOKEN:
-                    answer_callback(callback_query['id'], text='❌ ស្អម​កំណត់ Token ជា​មុន​សិន', show_alert=True)
-                    _show_clone_bot_menu(chat_id, user_id)
-                    return
-                _start_clone_bot(CLONE_BOT_TOKEN)
-                set_setting('CLONE_BOT_ACTIVE', 'true')
-                _show_clone_bot_menu(chat_id, user_id)
-                return
-            if action == 'tts_stop':
-                _stop_clone_bot()
-                set_setting('CLONE_BOT_ACTIVE', 'false')
-                _show_clone_bot_menu(chat_id, user_id)
-                return
-            if action == 'tts_token':
-                _prompt_admin_input(chat_id, user_id, 'clone_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ 🎙 TTS Bot\n\n"
-                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'tts')
-                return
-            if action == 'tts_clear':
-                _stop_clone_bot()
-                CLONE_BOT_TOKEN = ""
-                set_setting('CLONE_BOT_TOKEN', '')
-                set_setting('CLONE_BOT_ACTIVE', 'false')
-                _show_clone_bot_menu(chat_id, user_id)
+            if action in ('tts', 'tts_start', 'tts_stop', 'tts_token', 'tts_clear'):
+                answer_callback(callback_query['id'], '⚠️ មុខងារនេះដំណើរការតែនៅ Clone Bot ប៉ុណ្ណោះ', show_alert=True)
                 return
             if action == 'tr':
                 _show_translate_bot_menu(chat_id, user_id)
@@ -2709,132 +2681,13 @@ def handle_callback_query(update):
                 return
             return
 
-        elif callback_data == 'clone_feat_voice' and is_admin(user_id):
-            answer_callback(callback_query['id'])
-            _show_clone_bot_menu(chat_id)
-            return
-
         elif callback_data == 'clone_feat_translate' and is_admin(user_id):
             answer_callback(callback_query['id'])
             _show_translate_bot_menu(chat_id)
             return
 
-        elif callback_data == 'cbm_list' and is_admin(user_id):
-            answer_callback(callback_query['id'])
-            _show_clone_bots_list(chat_id)
-            return
-
-        elif callback_data == 'cbm_add' and is_admin(user_id):
-            answer_callback(callback_query['id'])
-            with _data_lock:
-                user_sessions[user_id] = {'state': 'clone_add_name'}
-            save_sessions_async()
-            send_message(chat_id,
-                "🤖 <b>បន្ថែម Clone Bot ថ្មី</b>\n\nសូមផ្ញើ <b>ឈ្មោះ</b> Clone Bot:",
-                parse_mode='HTML', reply_to_message_id=False,
-                reply_markup=CANCEL_INPUT_KEYBOARD)
-            return
-
-        elif callback_data.startswith('cbm:') and is_admin(user_id):
-            bot_id = callback_data[4:]
-            answer_callback(callback_query['id'])
-            _show_clone_bot_detail(chat_id, bot_id,
-                                   edit_msg_id=callback_query['message']['message_id'])
-            return
-
-        elif callback_data.startswith('cbm_start:') and is_admin(user_id):
-            bot_id = callback_data[10:]
-            ok = _start_clone_bot_by_id(bot_id)
-            answer_callback(callback_query['id'], '🟢 ចាប់ផ្តើម!' if ok else '❌ Token មិនទាន់​កំណត់')
-            _show_clone_bot_detail(chat_id, bot_id,
-                                   edit_msg_id=callback_query['message']['message_id'])
-            return
-
-        elif callback_data.startswith('cbm_stop:') and is_admin(user_id):
-            bot_id = callback_data[9:]
-            _stop_clone_bot_by_id(bot_id)
-            answer_callback(callback_query['id'], '🔴 បានបញ្ឈប់')
-            _show_clone_bot_detail(chat_id, bot_id,
-                                   edit_msg_id=callback_query['message']['message_id'])
-            return
-
-        elif callback_data.startswith('cbm_token:') and is_admin(user_id):
-            bot_id = callback_data[10:]
-            answer_callback(callback_query['id'])
-            with _data_lock:
-                user_sessions[user_id] = {'state': 'clone_set_token', 'bot_id': bot_id}
-            save_sessions_async()
-            send_message(chat_id,
-                "🔑 <b>សូមផ្ញើ Bot Token ថ្មី</b>\n<i>ទទួលពី @BotFather → /mybots → API Token</i>",
-                parse_mode='HTML', reply_to_message_id=False,
-                reply_markup=CANCEL_INPUT_KEYBOARD)
-            return
-
-        elif callback_data.startswith('cbm_del:') and is_admin(user_id):
-            bot_id = callback_data[8:]
-            answer_callback(callback_query['id'])
-            kb = {'inline_keyboard': [[
-                {'text': '✅ បញ្ជាក់លុប', 'callback_data': f"cbm_delok:{bot_id}"},
-                {'text': '🚫 បោះបង់',    'callback_data': f"cbm:{bot_id}"},
-            ]]}
-            _tg_api('editMessageReplyMarkup',
-                    chat_id=chat_id,
-                    message_id=callback_query['message']['message_id'],
-                    reply_markup=kb)
-            return
-
-        elif callback_data.startswith('cbm_delok:') and is_admin(user_id):
-            bot_id = callback_data[10:]
-            _stop_clone_bot_by_id(bot_id)
-            with _clone_bots_lock:
-                _clone_bots_list[:] = [b for b in _clone_bots_list if b['id'] != bot_id]
-            _save_clone_bots()
-            answer_callback(callback_query['id'], '✅ បានលុបហើយ')
-            _tg_api('editMessageText',
-                    chat_id=chat_id,
-                    message_id=callback_query['message']['message_id'],
-                    text="✅ <b>បានលុប Clone Bot</b>", parse_mode='HTML',
-                    reply_markup=_clone_bots_inline_kb())
-            return
-
-        elif callback_data.startswith('cbm_trl:') and is_admin(user_id):
-            bot_id = callback_data[8:]
-            answer_callback(callback_query['id'])
-            items = list(TRANSLATE_LANGUAGES.items())
-            rows  = []
-            for i in range(0, len(items), 3):
-                rows.append([{'text': name, 'callback_data': f"cbm_lang:{bot_id}:{code}"}
-                             for code, name in items[i:i+3]])
-            rows.append([
-                {'text': '🔇 បិទបកប្រែ', 'callback_data': f"cbm_lang:{bot_id}:off"},
-                {'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',   'callback_data': f"cbm:{bot_id}"},
-            ])
-            _tg_api('editMessageText',
-                    chat_id=chat_id,
-                    message_id=callback_query['message']['message_id'],
-                    text="🌐 <b>ជ្រើសភាសា Default សម្រាប់ Clone Bot</b>\n\n"
-                         "<i>ភាសានេះ apply ដល់អ្នកប្រើ Clone Bot ទាំងអស់ដែលមិនទាន់ជ្រើសភាសារបស់ខ្លួន</i>",
-                    parse_mode='HTML',
-                    reply_markup={'inline_keyboard': rows})
-            return
-
-        elif callback_data.startswith('cbm_lang:') and is_admin(user_id):
-            rest   = callback_data[9:]
-            bot_id, code = (rest.split(':', 1) + ['off'])[:2]
-            with _clone_bots_lock:
-                bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
-                if bot:
-                    if code == 'off':
-                        bot['default_lang']      = None
-                        bot['default_lang_name'] = None
-                    else:
-                        bot['default_lang']      = code
-                        bot['default_lang_name'] = TRANSLATE_LANGUAGES.get(code, code)
-            _save_clone_bots()
-            lang_name = TRANSLATE_LANGUAGES.get(code, code) if code != 'off' else 'បិទ'
-            answer_callback(callback_query['id'], f"✅ ភាសា: {lang_name}")
-            _show_clone_bot_detail(chat_id, bot_id,
-                                   edit_msg_id=callback_query['message']['message_id'])
+        elif (callback_data.startswith('cbm') or callback_data == 'clone_feat_voice') and is_admin(user_id):
+            answer_callback(callback_query['id'], '⚠️ មុខងារនេះដំណើរការតែនៅ Clone Bot ប៉ុណ្ណោះ', show_alert=True)
             return
 
         elif callback_data == 'cancel_buy':
@@ -4611,79 +4464,11 @@ def handle_message(update):
                                  reply_to_message_id=False, reply_markup=TRANSLATE_SUBMENU_KEYBOARD)
                 return
 
-            if session.get('state') == 'clone_add_name' and is_admin(user_id):
-                raw_name = text.strip()
-                if not raw_name or raw_name == BTN_CANCEL_INPUT:
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    send_message(chat_id, "🚫 បានបោះបង់", reply_to_message_id=False,
-                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    return
-                bot_id = hashlib.md5((raw_name + str(time.time())).encode()).hexdigest()[:8]
-                with _data_lock:
-                    user_sessions[user_id] = {'state': 'clone_add_token',
-                                              'bot_id': bot_id, 'bot_name': raw_name}
-                save_sessions_async()
-                send_message(chat_id,
-                    f"✅ ឈ្មោះ: <b>{html.escape(raw_name)}</b>\n\n"
-                    f"🔑 សូមផ្ញើ <b>Bot Token</b> ពី @BotFather:",
-                    parse_mode='HTML', reply_to_message_id=False,
-                    reply_markup=CANCEL_INPUT_KEYBOARD)
-                return
-
-            if session.get('state') == 'clone_add_token' and is_admin(user_id):
-                token    = text.strip()
-                bot_id   = session.get('bot_id')
-                bot_name = session.get('bot_name', 'Clone Bot')
-                if token == BTN_CANCEL_INPUT:
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    send_message(chat_id, "🚫 បានបោះបង់", reply_to_message_id=False,
-                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    return
-                with _clone_bots_lock:
-                    _clone_bots_list.append({'id': bot_id, 'name': bot_name, 'token': token,
-                                             'active': False, 'thread': None, 'stop_event': None})
-                _save_clone_bots()
+            if session.get('state') in ('clone_add_name', 'clone_add_token', 'clone_set_token', 'clone_token') and is_admin(user_id):
                 with _data_lock:
                     if user_id in user_sessions:
                         del user_sessions[user_id]
                 save_sessions_async()
-                delete_message_async(chat_id, message_id)
-                _show_clone_bot_detail(chat_id, bot_id)
-                return
-
-            if session.get('state') == 'clone_set_token' and is_admin(user_id):
-                token  = text.strip()
-                bot_id = session.get('bot_id')
-                if token == BTN_CANCEL_INPUT:
-                    with _data_lock:
-                        if user_id in user_sessions:
-                            del user_sessions[user_id]
-                    save_sessions_async()
-                    send_message(chat_id, "🚫 បានបោះបង់", reply_to_message_id=False,
-                                 reply_markup=ADMIN_SETTINGS_REPLY_KEYBOARD)
-                    return
-                with _clone_bots_lock:
-                    bot = next((b for b in _clone_bots_list if b['id'] == bot_id), None)
-                    if bot:
-                        if bot.get('stop_event'):
-                            bot['stop_event'].set()
-                        bot['token']     = token
-                        bot['active']    = False
-                        bot['thread']    = None
-                        bot['stop_event'] = None
-                _save_clone_bots()
-                with _data_lock:
-                    if user_id in user_sessions:
-                        del user_sessions[user_id]
-                save_sessions_async()
-                delete_message_async(chat_id, message_id)
-                _show_clone_bot_detail(chat_id, bot_id)
                 return
 
             if session['state'] == 'waiting_for_quantity':
