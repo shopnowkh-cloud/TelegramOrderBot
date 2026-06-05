@@ -1408,9 +1408,6 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
      {'text': '🗑 លុបប្រភេទ',      'callback_data': 's:del_type'}],
     [{'text': '📋 របាយការណ៍ទិញ',  'callback_data': 's:buyers'},
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
-    [{'text': '🎙 បង្កើតសំឡេង Ai', 'callback_data': 's:tts'}],
-    [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr',   'style': 'primary'}],
-    [{'text': 'Chat Automation',    'callback_data': 's:ca',   'style': 'primary'}],
 ]}
 SETTINGS_PAY_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរឈ្មោះ Payment', 'callback_data': 's:pay_edit'}],
@@ -2634,69 +2631,11 @@ def handle_callback_query(update):
                 set_setting('MAINTENANCE_MODE', 'false')
                 _show_maintenance_inline(chat_id, user_id)
                 return
-            if action == 'tts':
-                _show_clone_bot_menu(chat_id, user_id)
-                return
-            if action in ('tts_start', 'tts_stop', 'tts_token', 'tts_clear'):
-                _show_clone_bot_menu(chat_id, user_id)
-                return
-            if action == 'tr':
-                _show_translate_bot_menu(chat_id, user_id)
-                return
-            if action == 'tr_start':
-                if not TRANSLATE_BOT_TOKEN:
-                    answer_callback(callback_query['id'], text='❌ ស្អម​កំណត់ Token ជា​មុន​សិន', show_alert=True)
-                    _show_translate_bot_menu(chat_id, user_id)
-                    return
-                _start_translate_bot(TRANSLATE_BOT_TOKEN)
-                set_setting('TRANSLATE_BOT_ACTIVE', 'true')
-                _show_translate_bot_menu(chat_id, user_id)
-                return
-            if action == 'tr_stop':
-                _stop_translate_bot()
-                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
-                _show_translate_bot_menu(chat_id, user_id)
-                return
-            if action == 'tr_token':
-                _prompt_admin_input(chat_id, user_id, 'translate_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ 🌐 Translate Bot\n\n"
-                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'tr')
-                return
-            if action == 'tr_clear':
-                _stop_translate_bot()
-                TRANSLATE_BOT_TOKEN = ""
-                set_setting('TRANSLATE_BOT_TOKEN', '')
-                set_setting('TRANSLATE_BOT_ACTIVE', 'false')
-                _show_translate_bot_menu(chat_id, user_id)
-                return
-            if action == 'ca':
-                _show_chatbot_menu(chat_id, user_id)
-                return
-            if action == 'ca_start':
-                if not CHATBOT_TOKEN:
-                    answer_callback(callback_query['id'], text='❌ ស្អម​កំណត់ Token ជា​មុន​សិន', show_alert=True)
-                    _show_chatbot_menu(chat_id, user_id)
-                    return
-                _start_chatbot(CHATBOT_TOKEN)
-                set_setting('CHATBOT_ACTIVE', 'true')
-                _show_chatbot_menu(chat_id, user_id)
-                return
-            if action == 'ca_stop':
-                _stop_chatbot()
-                set_setting('CHATBOT_ACTIVE', 'false')
-                _show_chatbot_menu(chat_id, user_id)
-                return
-            if action == 'ca_token':
-                _prompt_admin_input(chat_id, user_id, 'chatbot_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ Chat Automation Bot\n\n"
-                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'ca')
-                return
-            if action == 'ca_clear':
-                _stop_chatbot()
-                CHATBOT_TOKEN = ""
-                set_setting('CHATBOT_TOKEN', '')
-                set_setting('CHATBOT_ACTIVE', 'false')
-                _show_chatbot_menu(chat_id, user_id)
+            if action in ('tts', 'tts_start', 'tts_stop', 'tts_token', 'tts_clear',
+                          'tr', 'tr_start', 'tr_stop', 'tr_token', 'tr_clear',
+                          'ca', 'ca_start', 'ca_stop', 'ca_token', 'ca_clear'):
+                answer_callback(callback_query['id'],
+                    '⚠️ មុខងារនេះដំណើរការតែនៅ Clone Bot ប៉ុណ្ណោះ', show_alert=True)
                 return
             if action == 'add_acc':
                 _start_add_account_flow(chat_id, user_id, callback_query['message']['message_id'])
