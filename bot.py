@@ -58,7 +58,12 @@ adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
 http.mount('https://', adapter)
 http.mount('http://', adapter)
 
-# ── Bakong KHQR ───────────────────────────────────────────────────────────────
+# ── KHPAY API ─────────────────────────────────────────────────────────────────
+KHPAY_API_KEY = os.environ.get("KHPAY_API_KEY", "")
+KHPAY_BASE_URL = "https://khpay.site/api/v1"
+KHPAY_HEADERS = {"Authorization": f"Bearer {KHPAY_API_KEY}", "Content-Type": "application/json"}
+
+# ── Bakong KHQR (kept for QR image generation only) ───────────────────────────
 BAKONG_TOKEN = os.environ.get("BAKONG_TOKEN", "")
 khqr_client  = KHQR(BAKONG_TOKEN)
 PAYMENT_NAME = "RADY"
@@ -204,66 +209,56 @@ def _build_khqr_manual(bank_account, merchant_name, merchant_city,
     )
     return body + _crc16_ccitt(body)
 
+def _khpay_is_paid(s: dict) -> bool:
+    paid_values = {"paid", "success", "completed", "approved"}
+    if s.get("paid") is True:
+        return True
+    if str(s.get("status", "")).lower() in paid_values:
+        return True
+    data = s.get("data", {})
+    if isinstance(data, dict):
+        if data.get("paid") is True:
+            return True
+        if str(data.get("status", "")).lower() in paid_values:
+            return True
+    return False
+
+def _khpay_is_failed(s: dict):
+    fail_values = {"expired", "failed", "cancelled"}
+    if str(s.get("status", "")).lower() in fail_values:
+        return str(s.get("status")).lower()
+    data = s.get("data", {})
+    if isinstance(data, dict):
+        ds = str(data.get("status", "")).lower()
+        if ds in fail_values:
+            return ds
+    return None
+
 def generate_payment_qr(amount):
-    if not BAKONG_TOKEN:
-        msg = "BAKONG_TOKEN មិនមានក្នុង environment"
+    if not KHPAY_API_KEY:
+        msg = "KHPAY_API_KEY មិនមានក្នុង environment"
         logger.error(msg)
         return None, msg, None
     try:
-        bill_number = f"TRX{int(time.time())}"
-        try:
-            try:
-                qr = khqr_client.create_qr(
-                    bank_account='sovannrady@aclb',
-                    merchant_name=PAYMENT_NAME,
-                    merchant_city='KPS',
-                    amount=amount,
-                    currency='USD',
-                    store_label=PAYMENT_NAME,
-                    phone_number='85593330905',
-                    bill_number=bill_number,
-                    terminal_label='Cashier-01',
-                    static=False,
-                    expiration=1
-                )
-                logger.info("create_qr with expiration=1 succeeded")
-            except TypeError:
-                qr = khqr_client.create_qr(
-                    bank_account='sovannrady@aclb',
-                    merchant_name=PAYMENT_NAME,
-                    merchant_city='KPS',
-                    amount=amount,
-                    currency='USD',
-                    store_label=PAYMENT_NAME,
-                    phone_number='85593330905',
-                    bill_number=bill_number,
-                    terminal_label='Cashier-01',
-                    static=False
-                )
-                logger.info("create_qr without expiration succeeded (older library)")
-            logger.info(f"KHQR string created, length={len(qr)}, start={qr[:40]}")
-            if '5303840' not in qr or '5404' not in qr:
-                logger.warning("Library KHQR missing currency/amount — using manual builder")
-                qr = _build_khqr_manual(
-                    bank_account='sovannrady@aclb',
-                    merchant_name=PAYMENT_NAME,
-                    merchant_city='KPS',
-                    amount=amount,
-                    bill_number=bill_number,
-                    phone='85593330905',
-                    store_label=PAYMENT_NAME,
-                    terminal_label='Cashier-01'
-                )
-                logger.info(f"Manual KHQR built, length={len(qr)}, start={qr[:40]}")
-        except Exception as e:
-            msg = f"create_qr failed: {type(e).__name__}: {e}"
-            logger.error(msg)
+        res = http.post(
+            f"{KHPAY_BASE_URL}/bakong/generate",
+            json={"amount": amount, "currency": "USD", "note": "", "type": "individual", "static": False},
+            headers=KHPAY_HEADERS,
+            timeout=30,
+        )
+        data = res.json()
+        if not data.get("success"):
+            msg = data.get("error") or data.get("message") or "KHPAY generate failed"
+            logger.error(f"KHPAY generate error: {msg}")
             return None, msg, None
-        md5 = compute_md5(qr)
-        logger.info(f"MD5 computed: {md5}")
+        payload  = data.get("data", {})
+        txn_id   = payload.get("transaction_id", "")
+        qr       = payload.get("qr", "")
+        logger.info(f"KHPAY QR generated, txn_id={txn_id}")
+        # Generate QR image
         img_bytes = None
         try:
-            img_bytes = khqr_client.qr_image(qr, format='bytes')
+            img_bytes = io.BytesIO(khqr_client.qr_image(qr, format="bytes")).getvalue()
             logger.info("QR image generated via bakong-khqr library")
         except Exception as e1:
             logger.warning(f"bakong-khqr image failed ({type(e1).__name__}: {e1}), trying qrcode library")
@@ -285,40 +280,28 @@ def generate_payment_qr(amount):
                 img_bytes = resp.content
                 logger.info("QR image generated via qrserver.com API")
             except Exception as e3:
-                msg = f"all 3 QR image methods failed. Last: {type(e3).__name__}: {e3}"
+                msg = f"all QR image methods failed: {type(e3).__name__}: {e3}"
                 logger.error(msg)
                 return None, msg, None
-        logger.info(f"Generated KHQR for amount ${amount}, bill {bill_number}, md5 {md5}, size {len(img_bytes)}b")
-        return img_bytes, md5, qr
+        logger.info(f"Generated KHPAY QR for amount ${amount}, txn_id={txn_id}, size={len(img_bytes)}b")
+        return img_bytes, txn_id, qr
     except Exception as e:
         msg = f"Unexpected: {type(e).__name__}: {e}"
         logger.error(f"Failed to generate payment QR: {msg}")
         return None, msg, None
 
-def _bakong_api_url():
-    if BAKONG_TOKEN and BAKONG_TOKEN.startswith("rbk"):
-        return "https://api.bakongrelay.com/v1"
-    return "https://api-bakong.nbc.gov.kh/v1"
-
-def compute_md5(qr: str) -> str:
-    return hashlib.md5(qr.encode('utf-8')).hexdigest()
-
-def check_payment_status(md5):
+def check_payment_status(txn_id):
     try:
-        base = _bakong_api_url()
-        resp = http.post(
-            f"{base}/check_transaction_by_md5",
-            json={"md5": md5},
-            headers={
-                "Authorization": f"Bearer {BAKONG_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            timeout=10
+        res = http.post(
+            f"{KHPAY_BASE_URL}/bakong/check",
+            json={"transaction_id": txn_id},
+            headers=KHPAY_HEADERS,
+            timeout=30,
         )
-        data = resp.json()
-        logger.info(f"check_payment response: status={resp.status_code} body={data}")
-        if data.get("responseCode") == 0:
-            return True, data.get("data", {})
+        s = res.json()
+        logger.info(f"check_payment response: status={res.status_code} body={s}")
+        if _khpay_is_paid(s):
+            return True, s.get("data") or s
         return False, None
     except Exception as e:
         logger.error(f"Failed to check payment status: {type(e).__name__}: {e}")
@@ -2056,8 +2039,9 @@ def _generate_and_send_qr(chat_id, user_id, session):
                     del user_sessions[user_id]
             save_sessions_async()
             return
-        md5_hash = md5_or_err
-        session['md5_hash'] = md5_hash
+        txn_id = md5_or_err
+        session['txn_id'] = txn_id
+        session['md5_hash'] = txn_id
         session['qr_sent_at'] = time.time()
         photo_resp = send_photo_bytes(chat_id, img_bytes, reply_markup=CHECK_PAYMENT_KEYBOARD)
         if photo_resp and photo_resp.get('result'):
@@ -2066,9 +2050,9 @@ def _generate_and_send_qr(chat_id, user_id, session):
             session['qr_message_id'] = msg_id
         save_sessions_async()
         save_pending_payment_async(user_id, chat_id, session)
-        logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, MD5: {md5_hash}")
+        logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, txn_id={txn_id}")
     except Exception as e:
-        logger.error(f"Error generating KHQR: {type(e).__name__}: {e}")
+        logger.error(f"Error generating KHPAY QR: {type(e).__name__}: {e}")
         send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
         with _data_lock:
             if user_id in user_sessions:
@@ -2255,8 +2239,9 @@ def handle_callback_query(update):
                             del user_sessions[user_id]
                     save_sessions_async()
                     return
-                md5_hash = md5_or_err
-                session['md5_hash'] = md5_hash
+                txn_id = md5_or_err
+                session['txn_id'] = txn_id
+                session['md5_hash'] = txn_id
                 session['qr_sent_at'] = time.time()
                 rm_resp = send_message(chat_id, ".", reply_to_message_id=False, reply_markup={'remove_keyboard': True})
                 if rm_resp and rm_resp.get('result'):
@@ -2268,9 +2253,9 @@ def handle_callback_query(update):
                     session['qr_message_id'] = msg_id
                 save_sessions_async()
                 save_pending_payment_async(user_id, chat_id, session)
-                logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, MD5: {md5_hash}")
+                logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, txn_id={txn_id}")
             except Exception as e:
-                logger.error(f"Error generating KHQR: {type(e).__name__}: {e}")
+                logger.error(f"Error generating KHPAY QR: {type(e).__name__}: {e}")
                 send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
                 with _data_lock:
                     if user_id in user_sessions:
@@ -2805,13 +2790,13 @@ def handle_callback_query(update):
                 delete_message_async(chat_id, callback_query['message']['message_id'])
                 send_account_selection_inline(chat_id)
                 return
-            md5 = session.get('md5_hash')
-            if not md5:
+            txn_id = session.get('txn_id') or session.get('md5_hash')
+            if not txn_id:
                 answer_callback(callback_query['id'])
                 delete_message_async(chat_id, callback_query['message']['message_id'])
                 send_account_selection_inline(chat_id)
                 return
-            is_paid, payment_data = check_payment_status(md5)
+            is_paid, payment_data = check_payment_status(txn_id)
             if is_paid:
                 answer_callback(callback_query['id'], '✅ ការបង់ប្រាក់បានបញ្ជាក់!')
                 user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
@@ -2826,9 +2811,9 @@ def handle_callback_query(update):
             session = user_sessions.get(user_id)
             if not session or session.get('state') != 'payment_pending':
                 session = get_pending_payment(user_id)
-            md5 = session.get('md5_hash') if session else None
-            if md5:
-                is_paid, payment_data = check_payment_status(md5)
+            txn_id = (session.get('txn_id') or session.get('md5_hash')) if session else None
+            if txn_id:
+                is_paid, payment_data = check_payment_status(txn_id)
                 if is_paid:
                     answer_callback(callback_query['id'], '✅ ការបង់ប្រាក់បានបញ្ជាក់!')
                     user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
@@ -4615,8 +4600,9 @@ def handle_message(update):
                                     del user_sessions[user_id]
                             save_sessions_async()
                             return
-                        md5_hash = md5_or_err
-                        session['md5_hash']   = md5_hash
+                        txn_id = md5_or_err
+                        session['txn_id']     = txn_id
+                        session['md5_hash']   = txn_id
                         session['qr_sent_at'] = time.time()
                         dot_resp = send_sticker(chat_id, "CAACAgUAAxkBAAILvGnnaWwK-AXFeING4WOtIIKmoFYqAAIVAAMxIPsrpHGBfRB524Y7BA",
                                                 reply_markup=_main_kb(user_id))
