@@ -59,9 +59,13 @@ http.mount('https://', adapter)
 http.mount('http://', adapter)
 
 # ── KHPAY API ─────────────────────────────────────────────────────────────────
-KHPAY_API_KEY = os.environ.get("KHPAY_API_KEY", "")
+KHPAY_API_KEY  = os.environ.get("KHPAY_API_KEY", "")
 KHPAY_BASE_URL = "https://khpay.site/api/v1"
-KHPAY_HEADERS = {"Authorization": f"Bearer {KHPAY_API_KEY}", "Content-Type": "application/json"}
+KHPAY_HEADERS  = {"Authorization": f"Bearer {KHPAY_API_KEY}", "Content-Type": "application/json"}
+POLL_INTERVAL  = 10   # seconds between each payment check
+POLL_COUNT     = 6    # total checks (60 seconds window)
+_active_polls  = set()   # {user_id} — prevents double-delivery
+_polls_lock    = threading.Lock()
 
 # ── Bakong KHQR (kept for QR image generation only) ───────────────────────────
 BAKONG_TOKEN = os.environ.get("BAKONG_TOKEN", "")
@@ -2051,6 +2055,9 @@ def _generate_and_send_qr(chat_id, user_id, session):
         save_sessions_async()
         save_pending_payment_async(user_id, chat_id, session)
         logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, txn_id={txn_id}")
+        qr_msg_id = session.get('qr_message_id') or session.get('photo_message_id')
+        _run_background(f"poll_payment_{user_id}", _poll_payment_background,
+                        user_id, chat_id, txn_id, session['total_price'], qr_msg_id)
     except Exception as e:
         logger.error(f"Error generating KHPAY QR: {type(e).__name__}: {e}")
         send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
@@ -2058,6 +2065,87 @@ def _generate_and_send_qr(chat_id, user_id, session):
             if user_id in user_sessions:
                 del user_sessions[user_id]
         save_sessions_async()
+
+def _poll_payment_background(user_id, chat_id, txn_id, amount, qr_msg_id):
+    """Auto-polls KHPAY every POLL_INTERVAL seconds up to POLL_COUNT times.
+    Mirrors the poll_payment() logic from the reference implementation."""
+    with _polls_lock:
+        if user_id in _active_polls:
+            return
+        _active_polls.add(user_id)
+    last_status_msg_id = None
+    try:
+        for i in range(POLL_COUNT):
+            time.sleep(POLL_INTERVAL)
+            # If session was already cleared (manual check delivered or user cancelled), stop
+            with _data_lock:
+                session = user_sessions.get(user_id)
+            if not session or session.get('state') != 'payment_pending':
+                return
+            try:
+                s = http.post(
+                    f"{KHPAY_BASE_URL}/bakong/check",
+                    json={"transaction_id": txn_id},
+                    headers=KHPAY_HEADERS,
+                    timeout=30,
+                ).json()
+                if _khpay_is_paid(s):
+                    # Remove from active polls first to prevent race with manual check
+                    with _polls_lock:
+                        _active_polls.discard(user_id)
+                    if last_status_msg_id:
+                        delete_message_async(chat_id, last_status_msg_id)
+                    delete_message_async(chat_id, qr_msg_id)
+                    with _data_lock:
+                        cur_session = user_sessions.get(user_id)
+                    if cur_session and cur_session.get('state') == 'payment_pending':
+                        deliver_accounts(chat_id, user_id, cur_session,
+                                         payment_data=s.get("data") or s, user_name='')
+                        delete_pending_payment_async(user_id)
+                        save_sessions_async()
+                    return
+                fail = _khpay_is_failed(s)
+                if fail:
+                    with _polls_lock:
+                        _active_polls.discard(user_id)
+                    if last_status_msg_id:
+                        delete_message_async(chat_id, last_status_msg_id)
+                    send_message(chat_id,
+                                 f"❌ <b>ការបង់ប្រាក់ {fail}</b>\n\nផ្ញើចំនួនទឹកប្រាក់ម្តងទៀតដើម្បីព្យាយាម",
+                                 parse_mode="HTML", reply_to_message_id=False)
+                    with _data_lock:
+                        if user_id in user_sessions:
+                            del user_sessions[user_id]
+                    delete_pending_payment_async(user_id)
+                    save_sessions_async()
+                    return
+            except Exception as e:
+                logger.error(f"Auto-poll error txn={txn_id} user={user_id}: {e}")
+            if i < POLL_COUNT - 1:
+                if last_status_msg_id:
+                    delete_message_async(chat_id, last_status_msg_id)
+                resp = send_message(chat_id, "🔍 រង់ចាំការបង់ប្រាក់...", reply_to_message_id=False)
+                if resp and resp.get('result'):
+                    last_status_msg_id = resp['result']['message_id']
+        # Timed out
+        if last_status_msg_id:
+            delete_message_async(chat_id, last_status_msg_id)
+        delete_message_async(chat_id, qr_msg_id)
+        with _data_lock:
+            session = user_sessions.get(user_id)
+        if session and session.get('state') == 'payment_pending':
+            send_message(chat_id,
+                         "⏰ <b>QR Code ផុតកំណត់ហើយ</b>\n\nចុច <b>ទិញ</b> ម្ដងទៀតដើម្បីបង្កើត QR ថ្មី",
+                         parse_mode="HTML", reply_to_message_id=False)
+            with _data_lock:
+                if user_id in user_sessions:
+                    del user_sessions[user_id]
+            delete_pending_payment_async(user_id)
+            save_sessions_async()
+            send_account_selection_inline(chat_id)
+    finally:
+        with _polls_lock:
+            _active_polls.discard(user_id)
 
 def _remind_pending_payment(chat_id, session):
     photo_msg_id = session.get('photo_message_id') or session.get('qr_message_id')
@@ -2254,6 +2342,9 @@ def handle_callback_query(update):
                 save_sessions_async()
                 save_pending_payment_async(user_id, chat_id, session)
                 logger.info(f"Generated QR for user {user_id}: Amount ${session['total_price']}, txn_id={txn_id}")
+                qr_msg_id = session.get('qr_message_id') or session.get('photo_message_id')
+                _run_background(f"poll_payment_{user_id}", _poll_payment_background,
+                                user_id, chat_id, txn_id, session['total_price'], qr_msg_id)
             except Exception as e:
                 logger.error(f"Error generating KHPAY QR: {type(e).__name__}: {e}")
                 send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
@@ -4615,6 +4706,9 @@ def handle_message(update):
                             session['qr_message_id']    = msg_id
                         save_sessions_async()
                         save_pending_payment_async(user_id, chat_id, session)
+                        qr_msg_id = session.get('qr_message_id') or session.get('photo_message_id')
+                        _run_background(f"poll_payment_{user_id}", _poll_payment_background,
+                                        user_id, chat_id, txn_id, session['total_price'], qr_msg_id)
                     except Exception as e:
                         logger.error(f"Error generating KHQR: {type(e).__name__}: {e}")
                         send_message(chat_id, "❌ *មានបញ្ហាក្នុងការបង្កើត QR Code*\n\nសូមព្យាយាមម្តងទៀត។", parse_mode="Markdown")
