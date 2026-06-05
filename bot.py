@@ -19,8 +19,6 @@ from urllib.parse import urlparse
 from urllib.parse import quote as url_quote
 
 import requests
-import psycopg2
-import psycopg2.extras
 from bakong_khqr import KHQR
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -326,53 +324,33 @@ def check_payment_status(md5):
         logger.error(f"Failed to check payment status: {type(e).__name__}: {e}")
     return False, None
 
-# ── PostgreSQL DB (Replit built-in) ───────────────────────────────────────────
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
-_db_lock = threading.Lock()
-_db_conn = None
-
-def _get_db_conn():
-    global _db_conn
-    with _db_lock:
-        try:
-            if _db_conn is None or _db_conn.closed:
-                _db_conn = psycopg2.connect(_DATABASE_URL)
-                _db_conn.autocommit = True
-        except Exception as e:
-            logger.error(f"DB connection failed: {e}")
-            _db_conn = None
-            raise
-        return _db_conn
+# ── Neon DB ───────────────────────────────────────────────────────────────────
+NEON_DATABASE_URL = os.environ.get("NEON_DATABASE_URL", "")
+_neon_host    = urlparse(NEON_DATABASE_URL).hostname if NEON_DATABASE_URL else ""
+_neon_api_url = f"https://{_neon_host}/sql"
+_neon_headers = {
+    'Neon-Connection-String': NEON_DATABASE_URL,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+}
 
 def _neon_query(query, params=None, _retries=3, _backoff=2):
-    # Convert $1,$2,... placeholders to %s for psycopg2
-    import re as _re
-    pg_query = _re.sub(r'\$\d+', '%s', query)
-    pg_params = params if params else None
+    body = {'query': query}
+    if params:
+        body['params'] = [str(p) if p is not None else None for p in params]
     last_exc = None
     for attempt in range(1, _retries + 1):
         try:
-            conn = _get_db_conn()
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(pg_query, pg_params)
-                try:
-                    rows = cur.fetchall()
-                    return {'rows': [dict(r) for r in rows], 'rowCount': cur.rowcount}
-                except psycopg2.ProgrammingError:
-                    return {'rows': [], 'rowCount': cur.rowcount}
+            resp = http.post(_neon_api_url, headers=_neon_headers, json=body, timeout=20)
+            if not resp.ok:
+                logger.warning(f"Neon query HTTP {resp.status_code}: {resp.text[:500]}")
+            resp.raise_for_status()
+            return resp.json()
         except Exception as e:
             last_exc = e
-            global _db_conn
-            with _db_lock:
-                try:
-                    if _db_conn:
-                        _db_conn.close()
-                except Exception:
-                    pass
-                _db_conn = None
             if attempt < _retries:
                 wait = _backoff * attempt
-                logger.warning(f"DB query failed (attempt {attempt}/{_retries}), retrying in {wait}s: {e}")
+                logger.warning(f"Neon query failed (attempt {attempt}/{_retries}), retrying in {wait}s: {e}")
                 time.sleep(wait)
     raise last_exc
 
