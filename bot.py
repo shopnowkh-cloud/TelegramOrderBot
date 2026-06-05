@@ -1205,11 +1205,17 @@ def parse_egets_verification_message(text):
     return email_match.group(0).strip().lower(), code_match.group(0)
 
 def format_egets_verification_message(email, code):
-    return (
+    text = (
         "📩 <b>លេខកូដផ្ទៀងផ្ទាត់ E-GetS</b>\n\n"
         f"{html.escape(email)}\n\n"
         f"<code>{html.escape(code)}</code>"
     )
+    keyboard = {
+        'inline_keyboard': [[
+            {'text': '📋 Copy លេខកូដ', 'copy_text': {'text': code}}
+        ]]
+    }
+    return text, keyboard
 
 def handle_channel_post(channel_post):
     chat       = channel_post.get('chat', {})
@@ -1223,12 +1229,12 @@ def handle_channel_post(channel_post):
     if not verification_email or not verification_code:
         return
 
-    formatted_message = format_egets_verification_message(verification_email, verification_code)
+    formatted_message, copy_keyboard = format_egets_verification_message(verification_email, verification_code)
     buyer_ids = find_all_buyers_by_email(verification_email)
     delivered_to = []
     for buyer_id in buyer_ids:
         buyer_sent = send_message(buyer_id, formatted_message, parse_mode="HTML",
-                                  reply_to_message_id=False, reply_markup=False)
+                                  reply_to_message_id=False, reply_markup=copy_keyboard)
         if buyer_sent and buyer_sent.get('result'):
             buyer_message_id = buyer_sent['result'].get('message_id')
             delete_message_later(buyer_id, buyer_message_id, 60)
