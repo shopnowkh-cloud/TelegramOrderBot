@@ -1377,8 +1377,6 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
     [{'text': '➕ បន្ថែម Account',  'callback_data': 's:add_acc'},
      {'text': '🗑 លុបប្រភេទ',      'callback_data': 's:del_type'}],
     [{'text': '📋 របាយការណ៍ទិញ',  'callback_data': 's:buyers'},
-     {'text': '📢 Channel ID',      'callback_data': 's:ch'}],
-    [{'text': '👑 Admin',           'callback_data': 's:adm'},
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
     [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr',   'style': 'primary'}],
     [{'text': 'Chat Automation',    'callback_data': 's:ca',   'style': 'primary'}],
