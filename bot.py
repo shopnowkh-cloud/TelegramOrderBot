@@ -1396,11 +1396,19 @@ SETTINGS_CH_IKB = {'inline_keyboard': [
      {'text': '🗑 លុប Channel ID',     'callback_data': 's:ch_clear'}],
     [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',            'callback_data': 's:main'}],
 ]}
-SETTINGS_ADM_IKB = {'inline_keyboard': [
-    [{'text': '➕ បន្ថែម Admin',       'callback_data': 's:adm_add'},
-     {'text': '➖ ដក Admin',           'callback_data': 's:adm_rm'}],
-    [{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់',            'callback_data': 's:main'}],
-]}
+def _build_settings_adm_ikb():
+    """Dynamic admin keyboard: one row per extra admin with 🗑 delete button."""
+    rows = []
+    for uid in sorted(EXTRA_ADMIN_IDS):
+        rows.append([
+            {'text': f'👤 {uid}', 'callback_data': 's:adm_noop'},
+            {'text': '🗑 លុប',   'callback_data': f's:adm_del:{uid}'},
+        ])
+    rows.append([{'text': '➕ បន្ថែម Admin', 'callback_data': 's:adm_add'}])
+    rows.append([{'text': '<tg-emoji emoji-id="5877629862306385808">◀️</tg-emoji> ត្រឡប់', 'callback_data': 's:main'}])
+    return {'inline_keyboard': rows}
+
+SETTINGS_ADM_IKB = None  # replaced by _build_settings_adm_ikb()
 SETTINGS_CANCEL_IKB = {'inline_keyboard': [
     [{'text': '🚫 បោះបង់',            'callback_data': 's:cancel_input'}],
 ]}
@@ -1446,7 +1454,7 @@ def _build_settings_chatbot_ikb():
 PAYMENT_SUBMENU_KEYBOARD    = SETTINGS_PAY_IKB
 BAKONG_SUBMENU_KEYBOARD     = SETTINGS_BAK_IKB
 CHANNEL_SUBMENU_KEYBOARD    = SETTINGS_CH_IKB
-ADMINS_SUBMENU_KEYBOARD     = SETTINGS_ADM_IKB
+ADMINS_SUBMENU_KEYBOARD     = None  # replaced by _build_settings_adm_ikb()
 MAINTENANCE_SUBMENU_KEYBOARD = None  # replaced by _build_settings_maint_ikb()
 CLONE_BOT_MENU_KEYBOARD_ACTIVE   = None  # replaced by _build_settings_tts_ikb()
 CLONE_BOT_MENU_KEYBOARD_INACTIVE = None  # replaced by _build_settings_tts_ikb()
@@ -1704,7 +1712,7 @@ def _show_admins_inline(chat_id, user_id=None):
         f"👑 <b>Admin បឋម៖</b> <code>{ADMIN_ID}</code>\n\n"
         f"➕ <b>Admin បន្ថែម៖</b>\n{extras_str}"
     )
-    _settings_edit(chat_id, uid, text_msg, SETTINGS_ADM_IKB)
+    _settings_edit(chat_id, uid, text_msg, _build_settings_adm_ikb())
 
 def _show_channel_inline(chat_id, user_id=None):
     uid     = user_id or chat_id
@@ -2570,6 +2578,19 @@ def handle_callback_query(update):
             if action == 'adm_rm':
                 _prompt_admin_input(chat_id, user_id, 'admin_remove',
                     "➖ ស្អមផ្ញើស <b>Telegram User ID</b>​ ដែលចង់ដក:", 'adm')
+                return
+            if action == 'adm_noop':
+                answer_callback(callback_query['id'])
+                return
+            if action.startswith('adm_del:'):
+                try:
+                    del_id = int(action.split(':', 1)[1])
+                except (IndexError, ValueError):
+                    answer_callback(callback_query['id'], '❌ Invalid ID', show_alert=True)
+                    return
+                EXTRA_ADMIN_IDS.discard(del_id)
+                set_setting('EXTRA_ADMIN_IDS', json.dumps(sorted(EXTRA_ADMIN_IDS)))
+                _show_admins_inline(chat_id, user_id)
                 return
             if action == 'mnt':
                 _show_maintenance_inline(chat_id, user_id)
