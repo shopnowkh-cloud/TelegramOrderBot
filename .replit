@@ -17,6 +17,7 @@ run = ["python", "bot.py"]
 [userenv]
 
 [userenv.shared]
+TELEGRAM_ADMIN_ID = "5002402843"
 
 [[ports]]
 localPort = 10000
