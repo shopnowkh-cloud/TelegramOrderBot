@@ -2140,9 +2140,6 @@ def _poll_payment_background(user_id, chat_id, txn_id, amount, qr_msg_id):
         with _data_lock:
             session = user_sessions.get(user_id)
         if session and session.get('state') == 'payment_pending':
-            send_message(chat_id,
-                         "⏰ <b>QR Code ផុតកំណត់ហើយ</b>\n\nចុច <b>ទិញ</b> ម្ដងទៀតដើម្បីបង្កើត QR ថ្មី",
-                         parse_mode="HTML", reply_to_message_id=False)
             with _data_lock:
                 if user_id in user_sessions:
                     del user_sessions[user_id]
