@@ -3745,16 +3745,19 @@ def _ca_check_deleted(base_url):
                 # Use the token that originally received this message for copyMessage
                 scan_url = entry.get('scan_url') or base_url
                 try:
+                    # Copy to ADMIN_ID (not back to customer's chat) so customers
+                    # never see the existence-check copy appear and disappear.
                     r = http.post(f"{scan_url}copyMessage", json={
-                        'chat_id':              chat_id,
+                        'chat_id':              ADMIN_ID,
                         'from_chat_id':         chat_id,
                         'message_id':           msg_id,
                         'disable_notification': True,
                     }, timeout=10).json()
                     if r.get('ok'):
                         copy_id = r['result']['message_id']
-                        http.post(f"{scan_url}deleteMessage",
-                                  json={'chat_id': chat_id, 'message_id': copy_id}, timeout=8)
+                        # Delete the check-copy from admin using main bot token
+                        http.post(f"{BOT_API_URL}deleteMessage",
+                                  json={'chat_id': ADMIN_ID, 'message_id': copy_id}, timeout=8)
                         resp = True
                     else:
                         desc = (r.get('description') or '').lower()
@@ -3934,7 +3937,7 @@ def _chatbot_handle_update(base_url, update):
         _ca_cache_message(chat_id, msg)
 
 def _chatbot_scan_loop(base_url):
-    """Dedicated thread: scans for deleted messages every 1 s, independently of polling."""
+    """Dedicated thread: scans for deleted messages every 30 s, independently of polling."""
     logger.info("Chat Automation scan thread started")
     while CHATBOT_ACTIVE:
         try:
@@ -3942,7 +3945,7 @@ def _chatbot_scan_loop(base_url):
         except Exception as e:
             logger.error(f"Chat Automation scan error: {e}")
         # Sleep in small steps so the thread exits quickly when CHATBOT_ACTIVE → False
-        for _ in range(10):
+        for _ in range(300):   # 300 × 0.1 s = 30 s between scans
             if not CHATBOT_ACTIVE:
                 break
             time.sleep(0.1)
