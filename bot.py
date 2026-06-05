@@ -1410,7 +1410,6 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
     [{'text': '🎙 បង្កើតសំឡេង Ai', 'callback_data': 's:tts'}],
     [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr'}],
-    [{'text': 'Chat Automation',    'callback_data': 's:ca'}],
 ]}
 SETTINGS_PAY_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរឈ្មោះ Payment', 'callback_data': 's:pay_edit'}],
@@ -2670,23 +2669,9 @@ def handle_callback_query(update):
                 set_setting('TRANSLATE_BOT_ACTIVE', 'false')
                 _show_translate_bot_menu(chat_id, user_id)
                 return
-            if action == 'ca':
-                _show_chatbot_menu(chat_id, user_id)
-                return
-            if action in ('ca_start', 'ca_stop'):
+            if action in ('ca', 'ca_start', 'ca_stop', 'ca_token', 'ca_clear'):
                 answer_callback(callback_query['id'],
-                    '⚠️ មុខងារនេះដំណើរការតែនៅ Clone Bot ប៉ុណ្ណោះ', show_alert=True)
-                return
-            if action == 'ca_token':
-                _prompt_admin_input(chat_id, user_id, 'chatbot_token',
-                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ Chat Automation Bot\n\n"
-                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'ca')
-                return
-            if action == 'ca_clear':
-                CHATBOT_TOKEN = ""
-                set_setting('CHATBOT_TOKEN', '')
-                set_setting('CHATBOT_ACTIVE', 'false')
-                _show_chatbot_menu(chat_id, user_id)
+                    '⚠️ Chat Automation ដំណើរការតែនៅ Clone Bot ប៉ុណ្ណោះ', show_alert=True)
                 return
             if action == 'add_acc':
                 _start_add_account_flow(chat_id, user_id, callback_query['message']['message_id'])
