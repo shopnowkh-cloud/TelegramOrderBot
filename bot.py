@@ -459,6 +459,15 @@ def _init_db():
             )
         """)
         _neon_query("""
+            CREATE TABLE IF NOT EXISTS bot_ca_msg_cache (
+                chat_id   BIGINT NOT NULL,
+                msg_id    BIGINT NOT NULL,
+                entry_json JSONB  NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (chat_id, msg_id)
+            )
+        """)
+        _neon_query("""
             INSERT INTO bot_known_users (user_id, first_seen, last_seen, admin_notified)
             SELECT DISTINCT user_id, MIN(purchased_at), MAX(purchased_at), 1
             FROM bot_purchase_history
@@ -3492,6 +3501,56 @@ def _ca_api(base_url, method, **kwargs):
         logger.error(f"CA API {method} error: {e}")
     return None
 
+def _ca_db_save(chat_id, msg_id, entry):
+    """Persist a cache entry to DB so it survives bot restarts."""
+    try:
+        _neon_query(
+            "INSERT INTO bot_ca_msg_cache (chat_id, msg_id, entry_json) "
+            "VALUES ($1, $2, $3::jsonb) "
+            "ON CONFLICT (chat_id, msg_id) DO UPDATE SET entry_json = EXCLUDED.entry_json, created_at = NOW()",
+            chat_id, msg_id, json.dumps(entry)
+        )
+    except Exception:
+        pass
+
+def _ca_db_delete(chat_id, msg_id):
+    """Remove a delivered/no-longer-needed cache entry from DB."""
+    try:
+        _neon_query(
+            "DELETE FROM bot_ca_msg_cache WHERE chat_id = $1 AND msg_id = $2",
+            chat_id, msg_id
+        )
+    except Exception:
+        pass
+
+def _ca_db_load():
+    """Load all recent cache entries from DB into memory (called at startup)."""
+    try:
+        rows = _neon_query(
+            "SELECT chat_id, msg_id, entry_json FROM bot_ca_msg_cache "
+            "WHERE created_at > NOW() - INTERVAL '24 hours'"
+        )
+        if not rows:
+            return
+        with _chatbot_cache_lock:
+            for row in rows:
+                cid, mid, entry = int(row[0]), int(row[1]), row[2]
+                if isinstance(entry, str):
+                    entry = json.loads(entry)
+                _chatbot_msg_cache.setdefault(cid, {})[mid] = entry
+        logger.info(f"Chat Automation: loaded {len(rows)} cached messages from DB")
+    except Exception as e:
+        logger.warning(f"Chat Automation: failed to load cache from DB: {e}")
+
+def _ca_db_cleanup():
+    """Delete DB cache entries older than 24 hours."""
+    try:
+        _neon_query(
+            "DELETE FROM bot_ca_msg_cache WHERE created_at < NOW() - INTERVAL '24 hours'"
+        )
+    except Exception:
+        pass
+
 def _ca_describe_msg(msg):
     """Return (emoji, preview) describing any Telegram message type."""
     caption = (msg.get('caption') or '').strip()
@@ -3621,12 +3680,14 @@ def _ca_cache_message(chat_id, msg, scan_url=None):
     }
     with _chatbot_cache_lock:
         _chatbot_msg_cache.setdefault(chat_id, {})[msg_id] = entry
-        # Keep cache size manageable — drop messages older than 2 hours
-        cutoff = time.time() - 7200
+        # Keep cache size manageable — drop messages older than 24 hours
+        cutoff = time.time() - 86400
         _chatbot_msg_cache[chat_id] = {
             mid: e for mid, e in _chatbot_msg_cache[chat_id].items()
             if e['ts'] >= cutoff
         }
+    # Persist to DB so cache survives bot restarts
+    _run_background("ca_db_save", _ca_db_save, chat_id, msg_id, entry)
 
 def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
     """Send a deletion notification to the user in their own chat — deduplicated.
@@ -3713,6 +3774,8 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
 
     with _chatbot_cache_lock:
         _chatbot_msg_cache.get(chat_id, {}).pop(msg_id, None)
+    # Remove from DB — notification delivered, no longer needed
+    _run_background("ca_db_delete", _ca_db_delete, chat_id, msg_id)
 
 def _ca_check_deleted(base_url):
     """Background scan: try to copy each cached message; notify admin if deleted."""
@@ -3935,14 +3998,21 @@ def _chatbot_handle_update(base_url, update):
         # Cache every human message for deletion tracking
         _ca_cache_message(chat_id, msg)
 
+_ca_cleanup_counter = 0
 def _chatbot_scan_loop(base_url):
     """Dedicated thread: scans for deleted messages every 30 s, independently of polling."""
+    global _ca_cleanup_counter
     logger.info("Chat Automation scan thread started")
     while CHATBOT_ACTIVE:
         try:
             _ca_check_deleted(base_url)
         except Exception as e:
             logger.error(f"Chat Automation scan error: {e}")
+        # DB cleanup every 10 cycles (~5 min)
+        _ca_cleanup_counter += 1
+        if _ca_cleanup_counter >= 10:
+            _ca_cleanup_counter = 0
+            _run_background("ca_db_cleanup", _ca_db_cleanup)
         # Sleep in small steps so the thread exits quickly when CHATBOT_ACTIVE → False
         for _ in range(300):   # 300 × 0.1 s = 30 s between scans
             if not CHATBOT_ACTIVE:
@@ -4007,6 +4077,8 @@ def _start_chatbot(token):
     _stop_chatbot()
     CHATBOT_ACTIVE = True
     base_url = f"https://api.telegram.org/bot{token}/"
+    # Reload persisted message cache from DB before starting threads
+    _ca_db_load()
     _chatbot_thread = threading.Thread(
         target=_chatbot_polling_loop, args=(token,),
         daemon=True, name="chatbot-poll"
