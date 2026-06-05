@@ -2022,8 +2022,7 @@ def _run_broadcast(admin_chat_id, source_message_id, use_copy=False):
 # ── QR / payment flow helpers ─────────────────────────────────────────────────
 CHECK_PAYMENT_KEYBOARD = {
     'inline_keyboard': [[
-        {'text': '🚫 បោះបង់', 'callback_data': 'cancel_purchase'},
-        {'text': '✅ ពិនិត្យការបង់ប្រាក់', 'callback_data': 'check_payment'}
+        {'text': '🚫 បោះបង់', 'callback_data': 'cancel_purchase'}
     ]]
 }
 
