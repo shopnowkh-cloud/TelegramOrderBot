@@ -3629,17 +3629,14 @@ def _ca_cache_message(chat_id, msg, scan_url=None):
         }
 
 def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
-    """Send a deletion notification to admin — deduplicated so only one fires per message.
-    Uses the Chat Automation bot token (base_url) so the notification appears inside
-    the Chat Automation bot chat, not the main bot."""
-    # Use the chatbot's own token — notification stays in Chat Automation bot
+    """Send a deletion notification to the user in their own chat — deduplicated.
+    Uses the Chat Automation bot token (base_url) to notify chat_id directly."""
     notify_url = base_url
     key = (chat_id, msg_id)
     with _ca_notified_lock:
         if key in _ca_notified_deletions:
             return
         _ca_notified_deletions.add(key)
-        # Trim set so it doesn't grow forever (keep last 2000 entries)
         if len(_ca_notified_deletions) > 2000:
             oldest = list(_ca_notified_deletions)[:500]
             for k in oldest:
@@ -3649,7 +3646,8 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
     emoji       = entry.get('emoji', '📨')
     preview     = entry.get('text', '') or '(not cached)'
     sender_id   = entry.get('user_id')
-    if sender_id and is_admin(sender_id):
+    # "ខ្ញុំ" when the person receiving the notification is the one who deleted
+    if sender_id and str(sender_id) == str(chat_id):
         who_line = '👤 ខ្ញុំ'
     else:
         who_line = f"👥 {fname} @{uname}" if uname else f"👥 {fname}"
@@ -3677,34 +3675,32 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
     if file_id and media_type in _CAPTION_METHODS:
         method, param = _CAPTION_METHODS[media_type]
         r = _ca_api(notify_url, method,
-                    chat_id=ADMIN_ID,
+                    chat_id=chat_id,
                     **{param: file_id},
                     caption=media_caption)
         sent = r is not None
 
     elif file_id and media_type == 'sticker':
-        # Stickers don't support captions — send header text first, then sticker
-        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
-        _ca_api(notify_url, 'sendSticker', chat_id=ADMIN_ID, sticker=file_id)
+        _ca_api(notify_url, 'sendMessage', chat_id=chat_id, text=header)
+        _ca_api(notify_url, 'sendSticker', chat_id=chat_id, sticker=file_id)
         sent = True
 
     elif file_id and media_type == 'video_note':
-        # Video notes don't support captions either
-        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID, text=header)
-        _ca_api(notify_url, 'sendVideoNote', chat_id=ADMIN_ID, video_note=file_id)
+        _ca_api(notify_url, 'sendMessage', chat_id=chat_id, text=header)
+        _ca_api(notify_url, 'sendVideoNote', chat_id=chat_id, video_note=file_id)
         sent = True
 
     elif media_type == 'location' and media_extra:
-        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendMessage', chat_id=chat_id,
                 text=f"{header}\n\n{emoji} {preview}")
-        _ca_api(notify_url, 'sendLocation', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendLocation', chat_id=chat_id,
                 latitude=media_extra['latitude'], longitude=media_extra['longitude'])
         sent = True
 
     elif media_type == 'contact' and media_extra:
-        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendMessage', chat_id=chat_id,
                 text=f"{header}\n\n{emoji} {preview}")
-        _ca_api(notify_url, 'sendContact', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendContact', chat_id=chat_id,
                 phone_number=media_extra['phone_number'],
                 first_name=media_extra['first_name'],
                 last_name=media_extra.get('last_name') or '')
@@ -3712,7 +3708,7 @@ def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
 
     if not sent:
         # Fallback: plain text for text messages and any unknown types
-        _ca_api(notify_url, 'sendMessage', chat_id=ADMIN_ID,
+        _ca_api(notify_url, 'sendMessage', chat_id=chat_id,
                 text=f"{header}\n\n{emoji} {preview}")
 
     with _chatbot_cache_lock:
@@ -3745,19 +3741,18 @@ def _ca_check_deleted(base_url):
                 # Use the token that originally received this message for copyMessage
                 scan_url = entry.get('scan_url') or base_url
                 try:
-                    # Copy to ADMIN_ID (not back to customer's chat) so customers
-                    # never see the existence-check copy appear and disappear.
+                    # Copy back to same chat to check existence, then immediately delete.
+                    # The 30 s scan interval keeps flashes infrequent for all users.
                     r = http.post(f"{scan_url}copyMessage", json={
-                        'chat_id':              ADMIN_ID,
+                        'chat_id':              chat_id,
                         'from_chat_id':         chat_id,
                         'message_id':           msg_id,
                         'disable_notification': True,
                     }, timeout=10).json()
                     if r.get('ok'):
                         copy_id = r['result']['message_id']
-                        # Delete the check-copy from admin using main bot token
-                        http.post(f"{BOT_API_URL}deleteMessage",
-                                  json={'chat_id': ADMIN_ID, 'message_id': copy_id}, timeout=8)
+                        http.post(f"{scan_url}deleteMessage",
+                                  json={'chat_id': chat_id, 'message_id': copy_id}, timeout=8)
                         resp = True
                     else:
                         desc = (r.get('description') or '').lower()
@@ -3874,12 +3869,12 @@ def _chatbot_handle_update(base_url, update):
                 existing_notify_id = _ca_edit_notify_msgs.get(key)
             edited = False
             if existing_notify_id:
-                # Use main bot URL — admin has a conversation with main bot, not the chatbot
-                r = _ca_api(BOT_API_URL, 'editMessageText',
-                            chat_id=ADMIN_ID, message_id=existing_notify_id, text=notify_txt)
+                # Notify in the user's own chat via chatbot token
+                r = _ca_api(base_url, 'editMessageText',
+                            chat_id=chat_id, message_id=existing_notify_id, text=notify_txt)
                 edited = r is not None
             if not edited:
-                r = _ca_api(BOT_API_URL, 'sendMessage', chat_id=ADMIN_ID, text=notify_txt)
+                r = _ca_api(base_url, 'sendMessage', chat_id=chat_id, text=notify_txt)
                 if r and isinstance(r, dict):
                     with _ca_edit_notify_lock:
                         _ca_edit_notify_msgs[key] = r.get('message_id')
