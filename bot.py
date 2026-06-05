@@ -1378,6 +1378,7 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
      {'text': '🗑 លុបប្រភេទ',      'callback_data': 's:del_type'}],
     [{'text': '📋 របាយការណ៍ទិញ',  'callback_data': 's:buyers'},
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
+    [{'text': '🎙 បង្កើតសំឡេង Ai', 'callback_data': 's:tts'}],
     [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr',   'style': 'primary'}],
     [{'text': 'Chat Automation',    'callback_data': 's:ca',   'style': 'primary'}],
 ]}
@@ -2603,8 +2604,11 @@ def handle_callback_query(update):
                 set_setting('MAINTENANCE_MODE', 'false')
                 _show_maintenance_inline(chat_id, user_id)
                 return
-            if action in ('tts', 'tts_start', 'tts_stop', 'tts_token', 'tts_clear'):
-                answer_callback(callback_query['id'], '⚠️ មុខងារនេះដំណើរការតែនៅ Clone Bot ប៉ុណ្ណោះ', show_alert=True)
+            if action == 'tts':
+                _show_clone_bot_menu(chat_id, user_id)
+                return
+            if action in ('tts_start', 'tts_stop', 'tts_token', 'tts_clear'):
+                _show_clone_bot_menu(chat_id, user_id)
                 return
             if action == 'tr':
                 _show_translate_bot_menu(chat_id, user_id)
