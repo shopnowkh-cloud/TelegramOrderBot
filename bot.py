@@ -800,49 +800,6 @@ def find_buyer_by_email(email):
         logger.error(f"Failed to find buyer by email {email}: {e}")
     return None
 
-def find_all_buyers_by_email(email):
-    email = (email or '').strip().lower()
-    if not email:
-        return []
-    buyers = []
-    seen = set()
-    try:
-        r = _neon_query(
-            "SELECT user_id, MAX(purchased_at) AS last_at FROM bot_purchase_history "
-            "WHERE accounts @> $1::jsonb GROUP BY user_id ORDER BY last_at DESC",
-            [json.dumps([{"email": email}])]
-        )
-        for row in r.get('rows', []) or []:
-            uid = int(row['user_id'])
-            if uid not in seen:
-                seen.add(uid)
-                buyers.append(uid)
-    except Exception as e:
-        logger.error(f"JSONB buyer scan failed for {email}: {e}")
-    try:
-        r2 = _neon_query(
-            "SELECT user_id, accounts, purchased_at FROM bot_purchase_history "
-            "WHERE accounts::text ILIKE $1 ORDER BY purchased_at DESC",
-            [f"%{email}%"]
-        )
-        for row in r2.get('rows', []) or []:
-            accs = row.get('accounts') or []
-            if isinstance(accs, str):
-                try:
-                    accs = json.loads(accs)
-                except Exception:
-                    accs = []
-            for account in accs:
-                if str(account.get('email', '')).strip().lower() == email:
-                    uid = int(row['user_id'])
-                    if uid not in seen:
-                        seen.add(uid)
-                        buyers.append(uid)
-                    break
-    except Exception as e:
-        logger.error(f"ILIKE buyer scan failed for {email}: {e}")
-    return buyers
-
 # ── DB init + settings restore ────────────────────────────────────────────────
 _init_db()
 
@@ -1192,62 +1149,6 @@ def _send_document_bytes(chat_id, content_bytes, filename, caption=None):
     except Exception as e:
         logger.error(f"Failed to send document: {e}")
         return None
-
-# ── Channel helpers ───────────────────────────────────────────────────────────
-def _is_configured_channel(chat_id):
-    return CHANNEL_ID and str(chat_id) == str(CHANNEL_ID)
-
-def parse_egets_verification_message(text):
-    email_match = re.search(r'[\w.+%-]+@[\w.-]+\.[A-Za-z]{2,}', text or '')
-    code_match  = re.search(r'(?<!\d)\d{4,8}(?!\d)', text or '')
-    if not email_match or not code_match:
-        return None, None
-    return email_match.group(0).strip().lower(), code_match.group(0)
-
-def format_egets_verification_message(email, code):
-    return (
-        "📩 <b>លេខកូដផ្ទៀងផ្ទាត់ E-GetS</b>\n\n"
-        f"{html.escape(email)}\n\n"
-        f"<code>{html.escape(code)}</code>"
-    )
-
-def handle_channel_post(channel_post):
-    chat        = channel_post.get('chat', {})
-    chat_id     = chat.get('id')
-    message_id  = channel_post.get('message_id')
-    if not _is_configured_channel(chat_id) or not message_id:
-        return
-
-    text = channel_post.get('text') or channel_post.get('caption') or ''
-    verification_email, verification_code = parse_egets_verification_message(text)
-    if verification_email and verification_code:
-        formatted_message = format_egets_verification_message(verification_email, verification_code)
-        buyer_ids = find_all_buyers_by_email(verification_email)
-        delivered_to = []
-        for buyer_id in buyer_ids:
-            buyer_sent = send_message(buyer_id, formatted_message, parse_mode="HTML",
-                                      reply_to_message_id=False, reply_markup=False)
-            if buyer_sent and buyer_sent.get('result'):
-                buyer_message_id = buyer_sent['result'].get('message_id')
-                delete_message_later(buyer_id, buyer_message_id, 60)
-                delivered_to.append(buyer_id)
-                logger.info(f"Sent verification code for {verification_email} to buyer {buyer_id}")
-            else:
-                logger.warning(f"Direct send to buyer {buyer_id} failed for {verification_email}")
-        if not delivered_to:
-            logger.warning(f"No buyer reachable for {verification_email}; sending to admin")
-            sent = send_message(ADMIN_ID, formatted_message, parse_mode="HTML",
-                                reply_to_message_id=False, reply_markup=False)
-            if sent and sent.get('result'):
-                delete_message_later(ADMIN_ID, sent['result'].get('message_id'), 60)
-        return
-
-    copied = copy_message(ADMIN_ID, chat_id, message_id)
-    if copied:
-        logger.info(f"Copied channel post {message_id} from {chat_id} to admin {ADMIN_ID}")
-        return
-    if text:
-        send_message(ADMIN_ID, text, reply_to_message_id=False, reply_markup=False)
 
 # ── Account selection / keyboards ─────────────────────────────────────────────
 ACCOUNT_BTN_PREFIX = "ទិញ "
@@ -4419,13 +4320,6 @@ def handle_message(update):
         if 'callback_query' in update:
             handle_callback_query(update)
             return
-        if 'channel_post' in update:
-            handle_channel_post(update['channel_post'])
-            return
-        if 'edited_channel_post' in update:
-            handle_channel_post(update['edited_channel_post'])
-            return
-
         message    = update.get('message')
         if not message:
             return
@@ -4888,7 +4782,7 @@ def handle_message(update):
 def _get_updates(offset=None, timeout=30):
     params = {
         'timeout': timeout,
-        'allowed_updates': ['message', 'callback_query', 'channel_post'],
+        'allowed_updates': ['message', 'callback_query'],
     }
     if offset is not None:
         params['offset'] = offset
