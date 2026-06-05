@@ -19,6 +19,8 @@ from urllib.parse import urlparse
 from urllib.parse import quote as url_quote
 
 import requests
+import psycopg2
+import psycopg2.extras
 from bakong_khqr import KHQR
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -51,7 +53,7 @@ worker_pool    = ThreadPoolExecutor(max_workers=16)
 background_pool = ThreadPoolExecutor(max_workers=8)
 _data_lock     = threading.RLock()
 
-# HTTP session — used for Telegram Bot API, Neon DB, and Bakong API
+# HTTP session — used for Telegram Bot API and Bakong API
 http = requests.Session()
 http.headers.update({'Connection': 'keep-alive'})
 adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
@@ -324,33 +326,53 @@ def check_payment_status(md5):
         logger.error(f"Failed to check payment status: {type(e).__name__}: {e}")
     return False, None
 
-# ── Neon DB ───────────────────────────────────────────────────────────────────
-NEON_DATABASE_URL = os.environ.get("NEON_DATABASE_URL", "")
-_neon_host    = urlparse(NEON_DATABASE_URL).hostname if NEON_DATABASE_URL else ""
-_neon_api_url = f"https://{_neon_host}/sql"
-_neon_headers = {
-    'Neon-Connection-String': NEON_DATABASE_URL,
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-}
+# ── PostgreSQL DB (Replit built-in) ───────────────────────────────────────────
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+_db_lock = threading.Lock()
+_db_conn = None
+
+def _get_db_conn():
+    global _db_conn
+    with _db_lock:
+        try:
+            if _db_conn is None or _db_conn.closed:
+                _db_conn = psycopg2.connect(_DATABASE_URL)
+                _db_conn.autocommit = True
+        except Exception as e:
+            logger.error(f"DB connection failed: {e}")
+            _db_conn = None
+            raise
+        return _db_conn
 
 def _neon_query(query, params=None, _retries=3, _backoff=2):
-    body = {'query': query}
-    if params:
-        body['params'] = [str(p) if p is not None else None for p in params]
+    # Convert $1,$2,... placeholders to %s for psycopg2
+    import re as _re
+    pg_query = _re.sub(r'\$\d+', '%s', query)
+    pg_params = params if params else None
     last_exc = None
     for attempt in range(1, _retries + 1):
         try:
-            resp = http.post(_neon_api_url, headers=_neon_headers, json=body, timeout=20)
-            if not resp.ok:
-                logger.warning(f"Neon query HTTP {resp.status_code}: {resp.text[:500]}")
-            resp.raise_for_status()
-            return resp.json()
+            conn = _get_db_conn()
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(pg_query, pg_params)
+                try:
+                    rows = cur.fetchall()
+                    return {'rows': [dict(r) for r in rows], 'rowCount': cur.rowcount}
+                except psycopg2.ProgrammingError:
+                    return {'rows': [], 'rowCount': cur.rowcount}
         except Exception as e:
             last_exc = e
+            global _db_conn
+            with _db_lock:
+                try:
+                    if _db_conn:
+                        _db_conn.close()
+                except Exception:
+                    pass
+                _db_conn = None
             if attempt < _retries:
                 wait = _backoff * attempt
-                logger.warning(f"Neon query failed (attempt {attempt}/{_retries}), retrying in {wait}s: {e}")
+                logger.warning(f"DB query failed (attempt {attempt}/{_retries}), retrying in {wait}s: {e}")
                 time.sleep(wait)
     raise last_exc
 
@@ -366,12 +388,12 @@ def _neon_cleanup():
         )
         cleared_accounts = (r3.get('rowCount') or 0)
         logger.info(
-            f"Neon cleanup: removed {deleted_verif} old verifications, "
+            f"DB cleanup: removed {deleted_verif} old verifications, "
             f"{deleted_sched} expired deletions, "
             f"cleared credentials on {cleared_accounts} old history rows"
         )
     except Exception as e:
-        logger.warning(f"Neon cleanup failed: {e}")
+        logger.warning(f"DB cleanup failed: {e}")
 
 def _neon_keepalive():
     cleanup_interval = 24 * 60 * 60
@@ -382,9 +404,9 @@ def _neon_keepalive():
         time.sleep(ping_interval)
         try:
             _neon_query("SELECT 1")
-            logger.debug("Neon keep-alive ping OK")
+            logger.debug("DB keep-alive ping OK")
         except Exception as e:
-            logger.warning(f"Neon keep-alive ping failed: {e}")
+            logger.warning(f"DB keep-alive ping failed: {e}")
         ping_count += 1
         if ping_count >= pings_per_cleanup:
             ping_count = 0
@@ -507,7 +529,7 @@ def _init_db():
         r = _neon_query("SELECT COUNT(*) as cnt FROM bot_sessions")
         if int(r['rows'][0]['cnt']) == 0:
             _neon_query("INSERT INTO bot_sessions (data) VALUES ($1)", [json.dumps({})])
-        logger.info("Neon DB initialized successfully")
+        logger.info("DB initialized successfully")
     except Exception as e:
         logger.error(f"DB init failed: {e}")
 
@@ -540,7 +562,7 @@ def load_data():
             data = r['rows'][0]['data']
             if isinstance(data, str):
                 data = json.loads(data)
-            logger.info("Loaded accounts data from Neon DB")
+            logger.info("Loaded accounts data from DB")
             _data_loaded_ok = True
             return data
     except Exception as e:
@@ -566,7 +588,7 @@ def save_data():
     try:
         _neon_query("UPDATE bot_accounts SET data = $1",
                     [json.dumps(accounts_data, ensure_ascii=False)])
-        logger.info("Saved accounts data to Neon DB")
+        logger.info("Saved accounts data to DB")
     except Exception as e:
         logger.error(f"Failed to save data to DB: {e}")
 
@@ -579,7 +601,7 @@ def load_sessions():
             if isinstance(data, str):
                 data = json.loads(data)
             user_sessions = {int(k): v for k, v in data.items()}
-            logger.info("Loaded sessions from Neon DB")
+            logger.info("Loaded sessions from DB")
     except Exception as e:
         logger.error(f"Failed to load sessions from DB: {e}")
 
@@ -4855,10 +4877,10 @@ def main():
     # Re-arm scheduled deletions from DB
     resume_scheduled_deletions()
 
-    # Start Neon keep-alive daemon
-    _ka_thread = threading.Thread(target=_neon_keepalive, daemon=True, name="neon-keepalive")
+    # Start DB keep-alive daemon
+    _ka_thread = threading.Thread(target=_neon_keepalive, daemon=True, name="db-keepalive")
     _ka_thread.start()
-    logger.info("Neon keep-alive thread started (ping every 4 minutes)")
+    logger.info("DB keep-alive thread started (ping every 4 minutes)")
 
     if CLONE_BOT_ACTIVE and CLONE_BOT_TOKEN:
         _start_clone_bot(CLONE_BOT_TOKEN)
