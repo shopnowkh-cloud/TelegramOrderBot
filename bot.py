@@ -1410,6 +1410,7 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
     [{'text': '🎙 បង្កើតសំឡេង Ai', 'callback_data': 's:tts'}],
     [{'text': 'បកប្រែភាសា',         'callback_data': 's:tr'}],
+    [{'text': 'Chat Automation',    'callback_data': 's:ca'}],
 ]}
 SETTINGS_PAY_IKB = {'inline_keyboard': [
     [{'text': '✏️ ប្តូរឈ្មោះ Payment', 'callback_data': 's:pay_edit'}],
@@ -2669,9 +2670,24 @@ def handle_callback_query(update):
                 set_setting('TRANSLATE_BOT_ACTIVE', 'false')
                 _show_translate_bot_menu(chat_id, user_id)
                 return
-            if action in ('ca', 'ca_start', 'ca_stop', 'ca_token', 'ca_clear'):
+            if action == 'ca':
+                _show_chatbot_menu(chat_id, user_id)
+                return
+            if action in ('ca_start', 'ca_stop'):
                 answer_callback(callback_query['id'],
                     '⚠️ Chat Automation ដំណើរការតែនៅ Clone Bot ប៉ុណ្ណោះ', show_alert=True)
+                return
+            if action == 'ca_token':
+                _prompt_admin_input(chat_id, user_id, 'chatbot_token',
+                    "🔑 សូម​ផ្ញើ <b>Bot Token</b>​ របស់ Chat Automation Bot\n\n"
+                    "<i>ទទួលពី @BotFather → /mybots → API Token</i>", 'ca')
+                return
+            if action == 'ca_clear':
+                _stop_chatbot()
+                CHATBOT_TOKEN = ""
+                set_setting('CHATBOT_TOKEN', '')
+                set_setting('CHATBOT_ACTIVE', 'false')
+                _show_chatbot_menu(chat_id, user_id)
                 return
             if action == 'add_acc':
                 _start_add_account_flow(chat_id, user_id, callback_query['message']['message_id'])
@@ -3614,11 +3630,10 @@ def _ca_cache_message(chat_id, msg, scan_url=None):
 
 def _ca_send_delete_notify(base_url, chat_id, msg_id, entry):
     """Send a deletion notification to admin — deduplicated so only one fires per message.
-    NOTE: Always uses BOT_API_URL (main bot) to reach the admin, because the admin already
-    has a conversation with the main bot.  The chatbot token cannot message the admin unless
-    the admin has explicitly started it, which would be silently blocked by Telegram."""
-    # Always use the main bot URL to send to admin — guaranteed to work
-    notify_url = BOT_API_URL
+    Uses the Chat Automation bot token (base_url) so the notification appears inside
+    the Chat Automation bot chat, not the main bot."""
+    # Use the chatbot's own token — notification stays in Chat Automation bot
+    notify_url = base_url
     key = (chat_id, msg_id)
     with _ca_notified_lock:
         if key in _ca_notified_deletions:
