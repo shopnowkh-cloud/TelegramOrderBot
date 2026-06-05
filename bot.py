@@ -3918,6 +3918,10 @@ def _chatbot_handle_update(base_url, update):
 
     # Cache private messages (both regular and Business) for deletion detection
     if chat_type == 'private' or is_business:
+        # Skip messages sent by any bot — scan check-copies are bot messages and
+        # must NOT be cached, otherwise deleting the check-copy fires a duplicate notification.
+        if user.get('is_bot'):
+            return
         if text.startswith('/start') and not is_business:
             _ca_api(base_url, 'sendMessage', chat_id=chat_id,
                 parse_mode='HTML',
@@ -3928,7 +3932,7 @@ def _chatbot_handle_update(base_url, update):
                     "ផ្ញើ message ណាមួយមកខ្ញុំ — Bot នឹងតាមដានដោយស្វ័យប្រវត្តិ ហើយជូនដំណឹងពេល message ត្រូវបានលុប"
                 ))
             return
-        # Cache every message for deletion tracking
+        # Cache every human message for deletion tracking
         _ca_cache_message(chat_id, msg)
 
 def _chatbot_scan_loop(base_url):
