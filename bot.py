@@ -820,6 +820,25 @@ def find_all_buyers_by_email(email):
         return []
     buyers = []
     seen = set()
+
+    # ── Fast path: bot_email_buyer_map (O(1) lookup) ──────────────────────────
+    try:
+        r0 = _neon_query(
+            "SELECT user_id FROM bot_email_buyer_map WHERE email = $1 LIMIT 1",
+            [email]
+        )
+        for row in (r0.get('rows') or []):
+            uid = int(row['user_id'])
+            if uid not in seen:
+                seen.add(uid)
+                buyers.append(uid)
+    except Exception as e:
+        logger.warning(f"email_buyer_map lookup failed for {email}: {e}")
+
+    if buyers:
+        return buyers  # found instantly — skip slow scans
+
+    # ── Fallback: full history scan (only if map miss) ─────────────────────────
     try:
         r = _neon_query(
             "SELECT user_id, MAX(purchased_at) AS last_at FROM bot_purchase_history "
@@ -855,6 +874,17 @@ def find_all_buyers_by_email(email):
                     break
     except Exception as e:
         logger.error(f"ILIKE buyer scan failed for {email}: {e}")
+
+    # Backfill the map so next lookup is instant
+    if buyers:
+        try:
+            _neon_query(
+                "INSERT INTO bot_email_buyer_map (email, user_id, purchased_at) "
+                "VALUES ($1, $2, NOW()) ON CONFLICT (email) DO UPDATE SET user_id = EXCLUDED.user_id",
+                [email, str(buyers[0])]
+            )
+        except Exception as e:
+            logger.warning(f"Failed to backfill email_buyer_map for {email}: {e}")
     return buyers
 
 # ── DB init + settings restore ────────────────────────────────────────────────
@@ -4306,10 +4336,10 @@ def handle_message(update):
             handle_callback_query(update)
             return
         if 'channel_post' in update:
-            handle_channel_post(update['channel_post'])
+            _run_background("channel_post_relay", handle_channel_post, update['channel_post'])
             return
         if 'edited_channel_post' in update:
-            handle_channel_post(update['edited_channel_post'])
+            _run_background("channel_post_relay", handle_channel_post, update['edited_channel_post'])
             return
         message    = update.get('message')
         if not message:
