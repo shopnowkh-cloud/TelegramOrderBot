@@ -706,6 +706,19 @@ def get_pending_payment(user_id):
         r = _neon_query("SELECT * FROM bot_pending_payments WHERE user_id = $1", [str(user_id)])
         if r['rows']:
             row = r['rows'][0]
+            created_at = row.get('created_at')
+            try:
+                if created_at:
+                    from datetime import timezone as _tz
+                    if hasattr(created_at, 'timestamp'):
+                        qr_sent_at = created_at.timestamp()
+                    else:
+                        from datetime import datetime as _dt
+                        qr_sent_at = _dt.fromisoformat(str(created_at).replace('Z', '+00:00')).timestamp()
+                else:
+                    qr_sent_at = 0
+            except Exception:
+                qr_sent_at = 0
             return {
                 'state': 'payment_pending',
                 'account_type': row.get('account_type'),
@@ -713,7 +726,8 @@ def get_pending_payment(user_id):
                 'total_price': float(row.get('total_price') or 0),
                 'md5_hash': row.get('md5_hash'),
                 'qr_message_id': int(row.get('qr_message_id') or 0),
-                'chat_id': int(row.get('chat_id') or 0)
+                'chat_id': int(row.get('chat_id') or 0),
+                'qr_sent_at': qr_sent_at,
             }
     except Exception as e:
         logger.error(f"Failed to get pending payment: {e}")
@@ -2141,12 +2155,15 @@ def _poll_payment_background(user_id, chat_id, txn_id, amount, qr_msg_id):
 
 def _remind_pending_payment(chat_id, session):
     photo_msg_id = session.get('photo_message_id') or session.get('qr_message_id')
+    sent = False
     if photo_msg_id:
-        copy_message(chat_id, chat_id, photo_msg_id, reply_markup=CHECK_PAYMENT_KEYBOARD)
-    else:
+        result = copy_message(chat_id, chat_id, photo_msg_id, reply_markup=CHECK_PAYMENT_KEYBOARD)
+        sent = bool(result)
+    if not sent:
         send_message(chat_id,
                      "⚠️ លោកអ្នកមានការទិញដែលកំពុងរង់ចាំការបង់ប្រាក់។ សូមបញ្ចប់ ឬ ចុច 🚫 បោះបង់ ដើម្បីចាប់ផ្តើមថ្មី។",
-                     reply_to_message_id=False)
+                     reply_to_message_id=False,
+                     reply_markup=CHECK_PAYMENT_KEYBOARD)
 
 def send_purchase_notification(message):
     if CHANNEL_ID:
@@ -4445,9 +4462,22 @@ def handle_message(update):
         if text.strip() == '/start':
             logger.info(f"User {user_id} triggered account selection interface")
             existing = user_sessions.get(user_id)
+            if not existing:
+                existing = get_pending_payment(user_id)
+                if existing:
+                    with _data_lock:
+                        user_sessions[user_id] = existing
             if existing and existing.get('state') == 'payment_pending':
-                _remind_pending_payment(chat_id, existing)
-                return
+                qr_sent_at = existing.get('qr_sent_at') or 0
+                age_seconds = time.time() - qr_sent_at if qr_sent_at else float('inf')
+                if age_seconds > 7200:
+                    with _data_lock:
+                        user_sessions.pop(user_id, None)
+                    delete_pending_payment_async(user_id)
+                    save_sessions_async()
+                else:
+                    _remind_pending_payment(chat_id, existing)
+                    return
             with _data_lock:
                 had_session = user_id in user_sessions
                 if had_session:
