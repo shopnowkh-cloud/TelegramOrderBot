@@ -1,0 +1,194 @@
+import os
+import io
+import logging
+import asyncio
+import requests
+from bakong_khqr import KHQR as BakongKHQR
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+KHPAY_API_KEY = os.environ.get("KHPAY_API_KEY", "")
+BASE_URL = "https://khpay.site/api/v1"
+HEADERS = {"Authorization": f"Bearer {KHPAY_API_KEY}", "Content-Type": "application/json"}
+
+POLL_INTERVAL = 10
+POLL_COUNT = 6
+
+
+def create_qr(amount: float) -> dict:
+    try:
+        res = requests.post(
+            f"{BASE_URL}/bakong/generate",
+            json={"amount": amount, "currency": "USD", "note": "", "type": "individual", "static": False},
+            headers=HEADERS,
+            timeout=30,
+        )
+        return res.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def check_status(txn_id: str) -> dict:
+    try:
+        res = requests.post(
+            f"{BASE_URL}/bakong/check",
+            json={"transaction_id": txn_id},
+            headers=HEADERS,
+            timeout=30,
+        )
+        return res.json()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def make_qr_image(qr_string: str) -> io.BytesIO:
+    bio = io.BytesIO(BakongKHQR().qr_image(qr_string, format="bytes"))
+    bio.seek(0)
+    return bio
+
+
+def is_paid(s: dict) -> bool:
+    paid_values = {"paid", "success", "completed", "approved"}
+    if s.get("paid") is True:
+        return True
+    if str(s.get("status", "")).lower() in paid_values:
+        return True
+    data = s.get("data", {})
+    if isinstance(data, dict):
+        if data.get("paid") is True:
+            return True
+        if str(data.get("status", "")).lower() in paid_values:
+            return True
+    return False
+
+
+def is_failed(s: dict) -> str | None:
+    fail_values = {"expired", "failed", "cancelled"}
+    if str(s.get("status", "")).lower() in fail_values:
+        return str(s.get("status")).lower()
+    data = s.get("data", {})
+    if isinstance(data, dict):
+        ds = str(data.get("status", "")).lower()
+        if ds in fail_values:
+            return ds
+    return None
+
+
+async def try_delete(context, chat_id: int, message_id: int) -> None:
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
+
+async def poll_payment(context, chat_id: int, txn_id: str, amount: float, qr_msg_id: int) -> None:
+    loop = asyncio.get_event_loop()
+    last_status_msg_id: int | None = None
+
+    for i in range(POLL_COUNT):
+        await asyncio.sleep(POLL_INTERVAL)
+
+        try:
+            s = await loop.run_in_executor(None, check_status, txn_id)
+
+            if is_paid(s):
+                if last_status_msg_id:
+                    await try_delete(context, chat_id, last_status_msg_id)
+                await try_delete(context, chat_id, qr_msg_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ <b>បង់ប្រាក់ជោគជ័យ!</b>\n\n💰 <code>${amount:.2f} USD</code>\n🙏 សូមអរគុណ!",
+                    parse_mode="HTML",
+                )
+                return
+
+            fail = is_failed(s)
+            if fail:
+                if last_status_msg_id:
+                    await try_delete(context, chat_id, last_status_msg_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ <b>ការបង់ប្រាក់ {fail}</b>\n\nផ្ញើចំនួនទឹកប្រាក់ម្តងទៀតដើម្បីព្យាយាម",
+                    parse_mode="HTML",
+                )
+                return
+
+        except Exception as e:
+            logger.error(f"Poll error txn={txn_id}: {e}")
+
+        if i < POLL_COUNT - 1:
+            if last_status_msg_id:
+                await try_delete(context, chat_id, last_status_msg_id)
+            new_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text="🔍 រង់ចាំការបង់ប្រាក់...",
+            )
+            last_status_msg_id = new_msg.message_id
+
+    if last_status_msg_id:
+        await try_delete(context, chat_id, last_status_msg_id)
+    await try_delete(context, chat_id, qr_msg_id)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="⏰ <b>QR Code ផុតកំណត់ហើយ</b>\n\nផ្ញើចំនួនទឹកប្រាក់ម្តងទៀតដើម្បីបង្កើត QR ថ្មី",
+        parse_mode="HTML",
+    )
+
+
+async def handle_amount(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text.strip()
+
+    try:
+        amount = float(text)
+        if amount <= 0 or amount > 10000:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text(
+            "❌ សូមផ្ញើចំនួនទឹកប្រាក់ត្រឹមត្រូវ\n\nឧទាហរណ៍: <code>1.50</code> ឬ <code>10</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    loop = asyncio.get_event_loop()
+    res = await loop.run_in_executor(None, create_qr, amount)
+
+    if not res.get("success"):
+        err = res.get("error") or res.get("message") or "Unknown error"
+        await update.message.reply_text(f"❌ <b>មានបញ្ហា:</b> <code>{err}</code>", parse_mode="HTML")
+        return
+
+    data = res.get("data", {})
+    txn_id = data.get("transaction_id", "")
+    qr_string = data.get("qr", "")
+
+    qr_bio = await loop.run_in_executor(None, make_qr_image, qr_string)
+    qr_msg = await update.message.reply_photo(photo=qr_bio)
+
+    context.application.create_task(
+        poll_payment(context, update.message.chat_id, txn_id, amount, qr_msg.message_id),
+        update=update,
+    )
+
+
+def main() -> None:
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
+    if not KHPAY_API_KEY:
+        raise RuntimeError("KHPAY_API_KEY is not set")
+
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT, handle_amount))
+
+    logger.info("Bot started")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()
