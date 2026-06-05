@@ -12,7 +12,7 @@ import time
 import hashlib
 import html
 import threading
-import fcntl
+import signal
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -4911,14 +4911,30 @@ def _polling_loop():
             time.sleep(5)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+_PID_FILE = '/tmp/telegram_bot.pid'
+
+def _acquire_single_instance():
+    """Kill any previous instance then write current PID."""
+    if os.path.exists(_PID_FILE):
+        try:
+            old_pid = int(open(_PID_FILE).read().strip())
+            if old_pid != os.getpid():
+                try:
+                    os.kill(old_pid, signal.SIGTERM)
+                    time.sleep(2)
+                except ProcessLookupError:
+                    pass
+                try:
+                    os.kill(old_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        except Exception:
+            pass
+    with open(_PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+
 def main():
-    # Single-process lock (prevent duplicate instances)
-    lock_file = open('/tmp/telegram_bot_simple.lock', 'w')
-    try:
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        logger.error("Another bot process is already running. Exiting duplicate process.")
-        return
+    _acquire_single_instance()
 
     logger.info("Starting Telegram Bot (Bot API HTTP polling)...")
     logger.info(f"Bot token configured: {BOT_TOKEN[:10]}...")
