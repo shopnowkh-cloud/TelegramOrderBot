@@ -1367,8 +1367,6 @@ SETTINGS_MAIN_IKB = {'inline_keyboard': [
     [{'text': '➕ បន្ថែម Account',  'callback_data': 's:add_acc'},
      {'text': '🗑 លុបប្រភេទ',      'callback_data': 's:del_type'}],
     [{'text': '📋 របាយការណ៍ទិញ',  'callback_data': 's:buyers'},
-     {'text': '💳 ឈ្មោះ Payment',  'callback_data': 's:pay'}],
-    [{'text': '🔑 Bakong Token',    'callback_data': 's:bak'},
      {'text': '📢 Channel ID',      'callback_data': 's:ch'}],
     [{'text': '👑 Admin',           'callback_data': 's:adm'},
      {'text': '🛠 Maintenance',     'callback_data': 's:mnt'}],
@@ -1472,9 +1470,8 @@ def _build_account_type_keyboard():
 
 ADMIN_BUTTON_LABELS = {
     BTN_ADD_ACCOUNT, BTN_DELETE_TYPE, BTN_BUYERS,
-    BTN_PAYMENT, BTN_BAKONG, BTN_CHANNEL, BTN_MAINTENANCE, '🤖 Clone Bot',
+    BTN_CHANNEL, BTN_MAINTENANCE, '🤖 Clone Bot',
     BTN_BACK_SETTINGS,
-    BTN_PAYMENT_EDIT, BTN_BAKONG_EDIT,
     BTN_CHANNEL_EDIT, BTN_CHANNEL_CLEAR,
     BTN_ADMIN_ADD, BTN_ADMIN_REMOVE,
     BTN_MAINT_ON, BTN_MAINT_OFF,
