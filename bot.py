@@ -246,7 +246,7 @@ def generate_payment_qr(amount):
     try:
         res = http.post(
             f"{KHPAY_BASE_URL}/bakong/generate",
-            json={"amount": amount, "currency": "USD", "note": "", "type": "individual", "static": False},
+            json={"amount": amount, "currency": "USD", "note": PAYMENT_NAME or "", "type": "individual", "static": False},
             headers=KHPAY_HEADERS,
             timeout=30,
         )
